@@ -1,0 +1,39 @@
+# The simulation broker, for local development.
+#
+# Only the broker runs here. The generator itself runs on the host via `pnpm dev`,
+# so you get watch-mode reloads — and, more importantly, restarting the generator
+# then never drops NiFi's subscription. That separation is the whole reason the
+# broker is its own process rather than embedded in the Node service.
+#
+# Run:    docker compose up -d
+# Stop:   docker compose down
+# Needs:  the CIVITAS dev stack running first (it creates `civitas-network`).
+
+services:
+  civitas-mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: civitas-mosquitto
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      # Host 1884, not 1883: `civitas-frost` publishes 1883 but nothing listens on
+      # it (HTTP-only FROST image), and Docker will not let us bind it twice.
+      # Inside the network the port is the normal 1883.
+      - "1884:1883"
+    networks:
+      # Joining the platform's network is what lets NiFi reach this as
+      # `civitas-mosquitto:1883` — the address the marketplace's demo preset
+      # writes into the datasource configuration.
+      - civitas-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "healthcheck", "-m", "ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  civitas-network:
+    external: true
