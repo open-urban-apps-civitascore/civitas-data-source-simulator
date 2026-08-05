@@ -31,10 +31,6 @@ export async function createPublisher({ url, topic, clientId }: PublisherOptions
     reconnectPeriod: 5_000,
   });
 
-  console.log('mqtt client', client);
-  // const ewaTestPublish = client.publish('ewa', 'cool')
-  // console.log(ewaTestPublish)
-
   return {
     async publish(payload) {
       // QoS 1: the pipeline should see every reading at least once. MQTT keeps no

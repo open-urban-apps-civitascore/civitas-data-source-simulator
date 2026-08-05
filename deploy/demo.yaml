@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: demo
+data:
+  mosquitto.conf: |
+    # (paste broker/mosquitto.conf verbatim — comments included, they carry the reasoning)
+    listener 1883
+    allow_anonymous true
+    persistence false
+    log_dest stdout
+    log_type notice
+    connection_messages true
+    max_connections 100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: demo
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mosquitto } }
+  template:
+    metadata: { labels: { app: mosquitto } }
+    spec:
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2
+          args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+          ports: [{ containerPort: 1883 }]
+          volumeMounts:
+            - { name: config, mountPath: /mosquitto/config, readOnly: true }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: config
+          configMap: { name: mosquitto-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: demo
+spec:
+  selector: { app: mosquitto }
+  ports: [{ port: 1883, targetPort: 1883 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-data-generator
+  namespace: demo
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: demo-data-generator } }
+  template:
+    metadata: { labels: { app: demo-data-generator } }
+    spec:
+      containers:
+        - name: generator
+          image: ghcr.io/open-urban-apps-civitascore/demo-data-generator:0.1.0
+          ports: [{ containerPort: 4300 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 4300 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-data-generator
+  namespace: demo
+spec:
+  selector: { app: demo-data-generator }
+  ports: [{ port: 4300, targetPort: 4300 }]
