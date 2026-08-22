@@ -68,6 +68,10 @@ spec:
         - name: generator
           image: ghcr.io/open-urban-apps-civitascore/demo-data-generator:0.1.0
           ports: [{ containerPort: 4300 }]
+          env:
+            # dailyProfile peaks are authored in local hours (rush hour 8/17);
+            # the container defaults to UTC, which would shift every curve.
+            - { name: TZ, value: Europe/Berlin }
           readinessProbe:
             httpGet: { path: /healthz, port: 4300 }
           resources:
