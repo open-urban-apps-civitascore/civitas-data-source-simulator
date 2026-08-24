@@ -78,7 +78,16 @@ export class Registry {
     };
     this.simulations.set(id, simulation);
 
-    if (input.enabled) await this.start(simulation);
+    if (input.enabled) {
+      try {
+        await this.start(simulation);
+      } catch (error) {
+        // Keep the promise the 502 makes: an unreachable broker is REPORTED, not
+        // kept around as a registered simulation that silently never publishes.
+        this.simulations.delete(id);
+        throw error;
+      }
+    }
     return toStatus(simulation);
   }
 
