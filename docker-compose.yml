@@ -1,9 +1,13 @@
-# The simulation broker, for local development.
+# Demo SOURCE infrastructure, for local development: the stand-ins for the
+# systems a real municipality would already have. The broker receives what the
+# generator publishes (MQTT use cases); the Fachverfahren database is polled by
+# the platform's SQL sources (SQL use cases). Both live here, outside the
+# platform stack, so a platform reset never touches them.
 #
-# Only the broker runs here. The generator itself runs on the host via `pnpm dev`,
-# so you get watch-mode reloads — and, more importantly, restarting the generator
-# then never drops NiFi's subscription. That separation is the whole reason the
-# broker is its own process rather than embedded in the Node service.
+# The generator itself runs on the host via `pnpm dev`, so you get watch-mode
+# reloads — and, more importantly, restarting the generator then never drops
+# NiFi's subscription. That separation is the whole reason the broker is its
+# own process rather than embedded in the Node service.
 #
 # Run:    docker compose up -d
 # Stop:   docker compose down
@@ -33,6 +37,40 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  baumkataster-db:
+    # A stand-in for a municipal "Fachverfahren" database — the SQL counterpart
+    # of the broker above. Ships EMPTY: the source table belongs to the use case,
+    # so its package brings the seed SQL (see the marketplace's
+    # kiez-baumkataster/seed/) and the runbook applies it. Keeping seed and
+    # container separate means re-seeding is one psql command, and the container
+    # stays generic for future SQL-sourced packages.
+    image: postgres:16-alpine
+    container_name: baumkataster-db
+    environment:
+      POSTGRES_DB: fachverfahren
+      POSTGRES_USER: kataster
+      POSTGRES_PASSWORD: kataster
+    ports:
+      # Host 5544 to stay clear of the platform's own Postgres instances.
+      - "5544:5432"
+    networks:
+      # Same reasoning as the broker: joining the platform's network is what
+      # lets the config-adapter's deploy probe and NiFi's DBCP pool reach this
+      # as `baumkataster-db:5432` — the DSN the package ships.
+      - civitas-network
+    volumes:
+      - baumkataster_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kataster -d fachverfahren"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  baumkataster_db_data:
 
 networks:
   civitas-network:
