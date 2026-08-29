@@ -80,7 +80,7 @@ curl -X PUT http://localhost:4300/simulations/my-dataset-id \
   -H 'Content-Type: application/json' \
   -d '{
     "transport": { "kind": "mqtt", "url": "mqtt://localhost:1884",
-                   "topic": "civitas/mittelerde-trafficcounter" },
+                   "topic": "civitas/musterhausen-trafficcounter" },
     "scenario": {
       "intervalSeconds": 10,
       "fields": {
