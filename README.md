@@ -136,3 +136,12 @@ stopping — is miserable to debug.
 - Marking generated data as simulated, so it can never be mistaken for real
   measurements on an open-data API
 - Verifying mapped mode live, which is what makes these payloads ingestible
+
+## Funding
+
+This project is funded by the **Federal Ministry of Research, Technology and Space (BMFTR)** as part of the **[Prototype Fund](https://prototypefund.de/)**, an initiative by the Open Knowledge Foundation Germany. 
+
+<div style="display: flex; gap: 20px; align-items: center; margin-top: 20px;">
+  <a href="https://www.bmbf.de/" target="_blank"><img src="./logo/bmftr.svg" height="110" alt="BMFTR Logo" /></a>
+  <a href="https://prototypefund.de/" target="_blank"><img src="./logo/ptf.svg" height="110" alt="Prototype Fund Logo" /></a>
+</div>
