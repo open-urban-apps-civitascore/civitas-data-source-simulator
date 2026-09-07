@@ -29,7 +29,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export function createGenerator(spec: GeneratorSpec): ValueFn {
+export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): ValueFn {
   switch (spec.kind) {
     case "constant":
       return () => spec.value;
@@ -57,7 +57,33 @@ export function createGenerator(spec: GeneratorSpec): ValueFn {
         const value = clamp(shaped * jitter, spec.min, spec.max);
         return spec.integer ? Math.round(value) : value;
       };
+
+    case "sequence": {
+      // Counter in memory, rows on disk: without `resumeFrom` a restart collides
+      // with every existing row while still reporting success.
+      let next = resumeFrom ?? spec.start;
+      return () => {
+        const value = next;
+        next += 1;
+        return `${spec.prefix}${String(value).padStart(spec.padTo, "0")}`;
+      };
+    }
+
+    case "jitter":
+      return () => {
+        const offset = (Math.random() * 2 - 1) * spec.spread;
+        const factor = 10 ** spec.precision;
+        return Math.round((spec.center + offset) * factor) / factor;
+      };
   }
+}
+
+/** Reads the counter back out of an existing key; null if it does not match. */
+export function sequenceValueOf(key: string, prefix: string): number | null {
+  if (!key.startsWith(prefix)) return null;
+  const suffix = key.slice(prefix.length);
+  if (!/^\d+$/.test(suffix)) return null;
+  return Number.parseInt(suffix, 10);
 }
 
 /** Write `value` at a dotted path, creating intermediate objects as needed. */
@@ -80,9 +106,13 @@ export function setPath(target: Record<string, unknown>, path: string, value: un
  * closure set so stateful generators (randomWalk) keep their position between
  * ticks instead of restarting on every message.
  */
-export function compileScenario(scenario: Scenario): (now: Date) => Record<string, unknown> {
+export function compileScenario(
+  scenario: Scenario,
+  /** Field name → next `sequence` value, read back from the table. */
+  resume: Record<string, number> = {},
+): (now: Date) => Record<string, unknown> {
   const fields = Object.entries(scenario.fields).map(
-    ([path, spec]) => [path, createGenerator(spec)] as const,
+    ([path, spec]) => [path, createGenerator(spec, resume[path])] as const,
   );
 
   return (now) => {
