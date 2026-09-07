@@ -109,7 +109,8 @@ export const mqttTransportSchema = z.object({
 
 export const sqlTransportSchema = z.object({
   kind: z.literal("sql"),
-  dsn: z.string().min(1),
+  /** Override; the generator's own DEMO_DB_DSN is the default. See config.ts. */
+  dsn: z.string().min(1).optional(),
   /** Schema-qualified, e.g. `kataster.kiez_baeume`. */
   table: z.string().min(1),
   /** Where the platform reads, if known — see `assertSameDatabase`. */

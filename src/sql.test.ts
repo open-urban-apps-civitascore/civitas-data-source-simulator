@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./publisher.js", () => ({
   createPublisher: vi.fn(async () => ({ publish: vi.fn(), close: vi.fn() })),
@@ -38,6 +38,7 @@ vi.mock("./sql-writer.js", async () => {
   };
 });
 
+import { DEMO_DB_DSN_VAR, resolveSqlDsn } from "./config.js";
 import { compileScenario, sequenceValueOf } from "./generators.js";
 import { Registry } from "./registry.js";
 import { assertSameDatabase, databaseNameOf, splitQualifiedTable } from "./sql-writer.js";
@@ -45,7 +46,7 @@ import { simulationInputSchema } from "./types.js";
 
 function sqlInput(overrides: Record<string, unknown> = {}) {
   return {
-    transport: { kind: "sql", dsn: "postgres://u:p@localhost:5544/fachverfahren", table: "kataster.kiez_baeume" },
+    transport: { kind: "sql", table: "kataster.kiez_baeume" },
     scenario: {
       intervalSeconds: 10,
       maxRows: 5,
@@ -165,7 +166,28 @@ describe("sequence and jitter", () => {
   });
 });
 
+describe("resolveSqlDsn", () => {
+  it("falls back to the generator's own database when the request names none", () => {
+    process.env[DEMO_DB_DSN_VAR] = "postgres://kataster@localhost:5544/fachverfahren";
+    expect(resolveSqlDsn(undefined)).toBe("postgres://kataster@localhost:5544/fachverfahren");
+  });
+
+  it("lets a request override it, for an operator's own database", () => {
+    process.env[DEMO_DB_DSN_VAR] = "postgres://kataster@localhost:5544/fachverfahren";
+    expect(resolveSqlDsn("postgres://elsewhere/db")).toBe("postgres://elsewhere/db");
+  });
+
+  it("refuses rather than guessing when neither is set", () => {
+    delete process.env[DEMO_DB_DSN_VAR];
+    expect(() => resolveSqlDsn(undefined)).toThrow(/No database configured/);
+  });
+});
+
 describe("Registry, SQL transport", () => {
+  beforeEach(() => {
+    process.env[DEMO_DB_DSN_VAR] = "postgres://kataster@localhost:5544/fachverfahren";
+  });
+
   it("seeds immediately, then stops at the row cap", async () => {
     table.length = 0;
     const registry = new Registry();

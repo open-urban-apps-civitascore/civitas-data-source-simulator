@@ -1,3 +1,4 @@
+import { resolveSqlDsn } from "./config.js";
 import { compileScenario } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
@@ -200,9 +201,10 @@ export class Registry {
     }
     const maxRows = scenario.maxRows;
 
-    assertSameDatabase(transport.dsn, transport.readDsn);
+    const dsn = resolveSqlDsn(transport.dsn);
+    assertSameDatabase(dsn, transport.readDsn);
 
-    const writer = await createSqlWriter({ dsn: transport.dsn, table: transport.table, spec });
+    const writer = await createSqlWriter({ dsn, table: transport.table, spec });
     simulation.writer = writer;
     await writer.ensureTable();
 
