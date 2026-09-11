@@ -215,6 +215,22 @@ describe("Registry, SQL transport", () => {
     await registry.shutdown();
   });
 
+  it("says so when the table is already full, instead of looking healthy", async () => {
+    // The second-install case: rows survive an uninstall, so a fresh simulation can
+    // start at the cap and write nothing at all.
+    table.length = 0;
+    for (let i = 1; i <= 5; i++) table.push({ baum_id: `KB-${i}`, lon: 7.6 });
+
+    const registry = new Registry();
+    const status = await registry.put("trees", simulationInputSchema.parse(sqlInput({ seedRows: 3 })));
+
+    expect(status.rowCount).toBe(5);
+    expect(status.maxRows).toBe(5);
+    expect(status.atCap).toBe(true);
+    expect(table).toHaveLength(5);
+    await registry.shutdown();
+  });
+
   it("reports a SQL simulation without pretending it has a topic", async () => {
     table.length = 0;
     const registry = new Registry();

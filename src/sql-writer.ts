@@ -1,6 +1,7 @@
 import pg from "pg";
 
-import { SIMULATED_COLUMN, type ColumnType, type TableSpec } from "./types.js";
+import type { ResolvedTable } from "./row-schema.js";
+import { SIMULATED_COLUMN, type ColumnType } from "./types.js";
 
 /**
  * SQL output. Unlike the MQTT publisher this owns the table's lifetime: the platform
@@ -69,7 +70,7 @@ export interface SqlWriter {
 export interface SqlWriterOptions {
   dsn: string;
   table: string;
-  spec: TableSpec;
+  spec: ResolvedTable;
 }
 
 export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): Promise<SqlWriter> {

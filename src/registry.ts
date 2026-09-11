@@ -1,6 +1,7 @@
 import { resolveSqlDsn } from "./config.js";
 import { compileScenario } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
+import { resolveTable } from "./row-schema.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
 import type { SimulationInput } from "./types.js";
 
@@ -29,6 +30,8 @@ export interface SimulationStatus {
   /** SQL only. */
   rowCount: number | null;
   maxRows: number | null;
+  /** SQL only: the table is full, so ticks write nothing. Not an error. */
+  atCap: boolean;
   lastPublishedAt: string | null;
   lastPayload: Record<string, unknown> | null;
   lastError: string | null;
@@ -44,6 +47,7 @@ interface Simulation {
   timer: NodeJS.Timeout | null;
   publishedCount: number;
   rowCount: number | null;
+  atCap: boolean;
   lastPublishedAt: Date | null;
   lastPayload: Record<string, unknown> | null;
   lastError: string | null;
@@ -70,11 +74,7 @@ export class Registry {
     this.now = now;
   }
 
-  /**
-   * Create or replace a simulation. Idempotent by id (the caller supplies the
-   * marketplace's dataset id), so re-registering after a restart — or a repeated
-   * call from a retry — converges instead of duplicating publishers.
-   */
+
   async put(id: string, input: SimulationInput): Promise<SimulationStatus> {
     const existing = this.simulations.get(id);
     if (!existing && this.simulations.size >= MAX_SIMULATIONS) {
@@ -92,6 +92,7 @@ export class Registry {
       timer: null,
       publishedCount: 0,
       rowCount: null,
+      atCap: false,
       lastPublishedAt: null,
       lastPayload: null,
       lastError: null,
@@ -204,7 +205,8 @@ export class Registry {
     const dsn = resolveSqlDsn(transport.dsn);
     assertSameDatabase(dsn, transport.readDsn);
 
-    const writer = await createSqlWriter({ dsn, table: transport.table, spec });
+    const resolved = resolveTable(spec);
+    const writer = await createSqlWriter({ dsn, table: transport.table, spec: resolved });
     simulation.writer = writer;
     await writer.ensureTable();
 
@@ -220,6 +222,7 @@ export class Registry {
 
     const writeRows = async (count: number) => {
       const room = Math.max(0, maxRows - (simulation.rowCount ?? 0));
+      simulation.atCap = room === 0;
       const rows = Array.from({ length: Math.min(count, room) }, () => simulation.render(this.now()));
       if (rows.length === 0) return;
       const written = await writer.write(rows);
@@ -274,10 +277,7 @@ export class Registry {
   }
 }
 
-/**
- * Sample rendering walks the clock forward by the real interval, so a preview of a
- * `dailyProfile` field shows the curve moving instead of the same hour repeated.
- */
+
 export function renderSample(
   render: (now: Date) => Record<string, unknown>,
   count: number,
@@ -302,6 +302,7 @@ function toStatus(simulation: Simulation): SimulationStatus {
     publishedCount: simulation.publishedCount,
     rowCount: simulation.rowCount,
     maxRows: simulation.input.scenario.maxRows ?? null,
+    atCap: simulation.atCap,
     lastPublishedAt: simulation.lastPublishedAt?.toISOString() ?? null,
     lastPayload: simulation.lastPayload,
     lastError: simulation.lastError,

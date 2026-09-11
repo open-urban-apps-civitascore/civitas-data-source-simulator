@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { resolveTable } from "./row-schema.js";
+
 /**
  * The scenario describes the data a simulated sensor sends — in the USE CASE'S OWN
  * format, not SensorThings. A real device emits its own domain shape, so emitting
@@ -71,11 +73,18 @@ export const columnTypeSchema = z.enum(["text", "integer", "double", "boolean", 
 
 export type ColumnType = z.infer<typeof columnTypeSchema>;
 
-/** Inline for now; eventually derived from the package's row structure. */
 export const tableSpecSchema = z.object({
-  columns: z.record(z.string(), columnTypeSchema),
-  /** Required: the platform rejects a SQL pipeline whose target has no key. */
-  primaryKey: z.string().min(1),
+  /** A JSON Schema describing one row. Columns are derived from its properties. */
+  rowSchema: z.unknown().optional(),
+  /** Where the row class sits inside it: '#' for the root, or '#/$defs/Name'. */
+  rowClass: z.string().default("#"),
+  /** The whole list when no schema is sent; otherwise per-column overrides. */
+  columns: z.record(z.string(), columnTypeSchema).default({}),
+  /**
+   * Optional only when the schema marks a property `x-core-primaryKey`. A key is
+   * never optional in substance: the platform rejects a SQL pipeline without one.
+   */
+  primaryKey: z.string().min(1).optional(),
 });
 
 export type TableSpec = z.infer<typeof tableSpecSchema>;
@@ -143,14 +152,16 @@ export const simulationInputSchema = z
       });
     }
 
-    const columns = input.scenario.table.columns;
-    const primaryKey = input.scenario.table.primaryKey;
-    if (!(primaryKey in columns)) {
+    let columns: Record<string, string>;
+    try {
+      columns = resolveTable(input.scenario.table).columns;
+    } catch (error) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["scenario", "table", "primaryKey"],
-        message: `primaryKey '${primaryKey}' is not one of the declared columns.`,
+        path: ["scenario", "table"],
+        message: error instanceof Error ? error.message : String(error),
       });
+      return;
     }
 
     for (const field of Object.keys(input.scenario.fields)) {
