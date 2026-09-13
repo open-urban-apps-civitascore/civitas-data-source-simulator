@@ -45,6 +45,11 @@ services:
     # kiez-baumkataster/seed/) and the runbook applies it. Keeping seed and
     # container separate means re-seeding is one psql command, and the container
     # stays generic for future SQL-sourced packages.
+    #
+    # It is also what SQL simulations write into locally: copy .env.example to
+    # .env and the generator picks up the address. In a cluster that role is
+    # filled by `demo-source-db` in deploy/demo.yaml. The names differ because
+    # this one's hostname is baked into the kiez-baumkataster package.
     image: postgres:16-alpine
     container_name: baumkataster-db
     environment:

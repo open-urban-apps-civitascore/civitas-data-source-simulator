@@ -53,6 +53,66 @@ spec:
   selector: { app: mosquitto }
   ports: [{ port: 1883, targetPort: 1883 }]
 ---
+# The database SQL simulations write into, and the platform polls as a source.
+# Shipped for the same reason as the broker above: a municipality has neither a
+# demo broker nor a demo source table, and asking an operator to supply a
+# database address through an install dialog is how wrong addresses get typed.
+#
+# An operator who already has a database deletes this Deployment, this Service
+# and this Secret, and points DEMO_DB_DSN at their own.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-source-db
+  namespace: demo
+type: Opaque
+stringData:
+  POSTGRES_DB: demo_source
+  POSTGRES_USER: demo
+  POSTGRES_PASSWORD: change-me
+  # The generator reads exactly this one variable; see src/config.ts.
+  DEMO_DB_DSN: postgres://demo:change-me@demo-source-db:5432/demo_source
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-source-db
+  namespace: demo
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: demo-source-db } }
+  template:
+    metadata: { labels: { app: demo-source-db } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef: { name: demo-source-db }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "demo", "-d", "demo_source"] }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        # Deliberately not a claim: everything here is disposable demo data, and
+        # the generator forgets its simulations on restart anyway. Swap in a
+        # PersistentVolumeClaim if a demo has to survive a pod restart.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-source-db
+  namespace: demo
+spec:
+  selector: { app: demo-source-db }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,6 +132,10 @@ spec:
             # dailyProfile peaks are authored in local hours (rush hour 8/17);
             # the container defaults to UTC, which would shift every curve.
             - { name: TZ, value: Europe/Berlin }
+            # Without this every SQL simulation fails with "No database configured".
+            - name: DEMO_DB_DSN
+              valueFrom:
+                secretKeyRef: { name: demo-source-db, key: DEMO_DB_DSN }
           readinessProbe:
             httpGet: { path: /healthz, port: 4300 }
           resources:

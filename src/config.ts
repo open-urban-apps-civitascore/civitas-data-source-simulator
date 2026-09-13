@@ -1,17 +1,19 @@
-/**
- * The generator's own database. The add-on ships one, so callers name a table —
- * not an address, and above all not a password, which has no business travelling
- * through an install dialog.
- */
+// The add-on ships the database SQL simulations write into (compose locally,
+// deploy/demo.yaml in a cluster), so callers name a table, never an address and
+// never a password.
+
+// Load `.env` when there is one. Node's own loader, so no dependency, and it
+// works under every runner — `tsx watch` swallows `--env-file`, which made the
+// flag on the dev script look like it worked while the child never saw it.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env: the real environment is the configuration, which is the container case.
+}
 
 export const DEMO_DB_DSN_VAR = "DEMO_DB_DSN";
 
-/**
- * `transport.dsn` stays available as an override for the deferred case where an
- * operator points the generator at a database of their own. There is deliberately
- * no baked-in default: a wrong-but-plausible address is the failure mode this
- * whole path is built to avoid.
- */
+/** No baked-in default: a wrong-but-plausible address is the failure to avoid. */
 export function resolveSqlDsn(requestDsn: string | undefined): string {
   const dsn = requestDsn?.trim() || process.env[DEMO_DB_DSN_VAR]?.trim();
   if (!dsn) {
