@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/layout/app-header";
 import { PageBody } from "@/components/layout/page-body";
 import { SimulationDetail } from "@/components/simulations/simulation-detail";
 import { getSimulation } from "@/lib/server/generator";
+import { requireSession } from "@/lib/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default async function SimulationPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
+  await requireSession();
   const [{ id }, { view }] = await Promise.all([params, searchParams]);
   const simulation = await getSimulation(id).catch(() => null);
 

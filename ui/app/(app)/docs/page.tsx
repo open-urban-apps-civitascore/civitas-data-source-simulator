@@ -1,8 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { PageBody } from "@/components/layout/page-body";
 import { GENERATOR_KINDS } from "@/lib/types";
+import { requireSession } from "@/lib/server/session";
 
-export default function DocsPage() {
+export default async function DocsPage() {
+  await requireSession();
   return (
     <>
       <AppHeader breadcrumb="Was ist das?" />

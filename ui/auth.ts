@@ -1,59 +1,29 @@
 import NextAuth from "next-auth";
 import Keycloak from "next-auth/providers/keycloak";
 
-// Cookies are scoped by hostname, not port, so each localhost app needs its own
-// namespace or the sessions overwrite each other.
-const COOKIE_PREFIX = "simulator";
-const useSecureCookies = process.env.NODE_ENV === "production";
-const cookieName = (name: string) =>
-  `${useSecureCookies ? "__Secure-" : ""}${COOKIE_PREFIX}.${name}`;
+import { authConfig } from "./auth.config";
 
-const baseCookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  path: "/",
-  secure: useSecureCookies,
-};
+// Two issuers: the browser is redirected to the address it can reach, while
+// token, userinfo and key lookups happen server side and may use the in-cluster
+// address. They are the same string in local development.
+const KC_EXTERNAL = process.env.KEYCLOAK_ISSUER ?? "";
+const KC_INTERNAL = process.env.KEYCLOAK_INTERNAL_ISSUER ?? KC_EXTERNAL;
+// Keycloak's default is RS256; a hardened realm may sign with ES256, and a
+// mismatch fails the callback with an unexpected algorithm header.
+const KC_ID_TOKEN_ALG = process.env.KEYCLOAK_ID_TOKEN_ALG ?? "RS256";
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
-  session: { strategy: "jwt" },
-  cookies: {
-    sessionToken: { name: cookieName("session-token"), options: baseCookieOptions },
-    callbackUrl: { name: cookieName("callback-url"), options: baseCookieOptions },
-    csrfToken: {
-      name: `${useSecureCookies ? "__Host-" : ""}${COOKIE_PREFIX}.csrf-token`,
-      options: baseCookieOptions,
-    },
-    pkceCodeVerifier: {
-      name: cookieName("pkce.code_verifier"),
-      options: { ...baseCookieOptions, maxAge: 60 * 15 },
-    },
-    state: { name: cookieName("state"), options: { ...baseCookieOptions, maxAge: 60 * 15 } },
-    nonce: { name: cookieName("nonce"), options: baseCookieOptions },
-  },
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   providers: [
     Keycloak({
-      clientId: process.env.AUTH_KEYCLOAK_ID,
-      clientSecret: process.env.AUTH_KEYCLOAK_SECRET,
-      issuer: process.env.AUTH_KEYCLOAK_ISSUER,
+      clientId: process.env.KEYCLOAK_CLIENT_ID,
+      clientSecret: process.env.KEYCLOAK_CLIENT_SECRET,
+      issuer: KC_EXTERNAL,
+      client: { id_token_signed_response_alg: KC_ID_TOKEN_ALG },
+      authorization: { url: `${KC_EXTERNAL}/protocol/openid-connect/auth` },
+      token: `${KC_INTERNAL}/protocol/openid-connect/token`,
+      userinfo: `${KC_INTERNAL}/protocol/openid-connect/userinfo`,
+      jwks_endpoint: `${KC_INTERNAL}/protocol/openid-connect/certs`,
     }),
   ],
-  callbacks: {
-    async jwt({ token, account }) {
-      if (account) {
-        // id_token for federated logout; access_token for the day the control
-        // API checks authz.
-        token.id_token = account.id_token;
-        token.access_token = account.access_token;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      // @ts-expect-error not in the default session type
-      session.id_token = token.id_token;
-      // @ts-expect-error not in the default session type
-      session.access_token = token.access_token;
-      return session;
-    },
-  },
 });

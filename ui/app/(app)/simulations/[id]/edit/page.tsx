@@ -5,6 +5,7 @@ import { PageBody } from "@/components/layout/page-body";
 import { SimulationEditor } from "@/components/simulations/simulation-editor";
 import { toDraft } from "@/lib/api-json";
 import { getSimulation } from "@/lib/server/generator";
+import { requireSession } from "@/lib/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ export default async function EditSimulationPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ mode?: string }>;
 }) {
+  await requireSession();
   const [{ id }, { mode }] = await Promise.all([params, searchParams]);
   const simulation = await getSimulation(id).catch(() => null);
 

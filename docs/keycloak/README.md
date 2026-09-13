@@ -18,6 +18,6 @@ curl -s -X POST http://localhost:8080/admin/realms/civitas-core/clients \
   --data-binary @docs/keycloak/demo-data-generator-client.local.json
 ```
 
-Then put the same secret into `ui/.env.local` as `AUTH_KEYCLOAK_SECRET`.
+Then put the same secret into `ui/.env.local` as `KEYCLOAK_CLIENT_SECRET`.
 
 The secret here is a dev-only placeholder and must not be used anywhere else.

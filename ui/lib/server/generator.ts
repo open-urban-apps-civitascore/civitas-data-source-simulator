@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getAccessToken } from "@/lib/server/session";
 import type {
   SimulationDetail,
   SimulationInput,
@@ -8,6 +9,8 @@ import type {
 } from "@/lib/types";
 
 const BASE_URL = (process.env.GENERATOR_BASE_URL ?? "http://localhost:4300").replace(/\/$/, "");
+/** The simulator is in the same cluster; a slow reply means it is in trouble. */
+const TIMEOUT_MS = 5000;
 
 export class GeneratorError extends Error {
   readonly status: number;
@@ -21,12 +24,23 @@ export class GeneratorError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  // The signed-in person's own token, so the simulator sees who is acting
+  // rather than just that something asked. Null while auth is disabled, and
+  // null when this instance has no Keycloak; the simulator then decides
+  // whether it minds, which keeps local development working.
+  const accessToken = await getAccessToken();
+
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(init?.headers ?? {}),
+      },
       cache: "no-store",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
     // A refused connection is the normal case; do not leak a fetch stack trace.

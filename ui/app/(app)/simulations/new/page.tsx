@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/layout/app-header";
 import { SimulationEditor } from "@/components/simulations/simulation-editor";
 import { findDataStructure } from "@/lib/portal-datastructures";
 import { draftFromDataStructure } from "@/lib/suggest";
+import { requireSession } from "@/lib/server/session";
 
 /**
  * `?from=<urn>` pre-fills the form. Read on the server: a client hook would need
@@ -15,6 +16,7 @@ export default async function NewSimulationPage({
 }: {
   searchParams: Promise<{ from?: string; mode?: string }>;
 }) {
+  await requireSession();
   const { from, mode } = await searchParams;
   const ds = findDataStructure(from);
 

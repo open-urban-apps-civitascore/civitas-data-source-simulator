@@ -75,7 +75,7 @@ export async function AppSidebar() {
             <form
               action={async () => {
                 "use server";
-                await signOut({ redirectTo: "/" });
+                await signOut({ redirectTo: "/login" });
               }}
             >
               <button type="submit" title="Abmelden" className="text-muted-foreground hover:text-foreground">

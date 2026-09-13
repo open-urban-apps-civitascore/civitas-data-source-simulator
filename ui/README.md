@@ -26,13 +26,28 @@ Keycloak at hand. Never set it anywhere a municipality can reach.
 
 ## Sign-in
 
-Keycloak via next-auth, the same setup the marketplace uses: the OpenID Connect
-authorization code flow with PKCE against the instance's realm. Auth cookies are
-namespaced `simulator.*` because the marketplace, the add-on and this app all run
-on `localhost` in dev and cookies are scoped by hostname, not by port.
+Keycloak via next-auth, following the marketplace's setup file for file: the
+config lives in `auth.config.ts` with the provider in `auth.ts`, auth cookies are
+namespaced `simulator.*` (the marketplace, the add-on and this app all run on
+`localhost`, and cookies are scoped by hostname, not by port), and the Keycloak
+session is ended on sign-out, not just the local cookie.
 
-The client definition is versioned in `../docs/keycloak/`, so it can be recreated
-after a Keycloak volume reset.
+Three things follow from that pattern and are worth knowing:
+
+- **Tokens never reach the browser.** They live in the encrypted session cookie.
+  The session object carries only an error field, because anything put on it is
+  served by `/api/auth/session`, which any script on the page can read.
+- **Access tokens are refreshed automatically.** They last about five minutes.
+  An expired one is exchanged using the refresh token; a refresh token Keycloak
+  refuses drops the session, while an unreachable Keycloak keeps it for a retry.
+- **Each page checks the session itself.** The layout cannot do it on their
+  behalf: layouts are cached on the client and do not re-render when navigating
+  between routes that share them, so a guard there would not run again after the
+  first load.
+
+Server-side calls to the simulator carry the signed-in person's access token, so
+the simulator sees who is acting. The client definition is versioned in
+`../docs/keycloak/`, so it can be recreated after a Keycloak volume reset.
 
 ## Screens
 
@@ -54,10 +69,10 @@ after a Keycloak volume reset.
 - **The data structures are placeholders.** They are constants in
   `lib/portal-datastructures.ts`. They have to come from the portal-backend
   (Model Forge) with the signed-in user's token.
-- **The control API has no authz.** This app requires a session before it will
-  proxy anything, but the generator itself still accepts unauthenticated calls
-  from elsewhere on the network. The session already carries the access token
-  for the day the service checks it.
+- **The marketplace has no token yet.** The simulator can now require one, but
+  the marketplace still calls it without, so switching the check on in an
+  instance that installs use cases would break installs until the marketplace
+  gets a Keycloak service account.
 - **Simulations do not survive a restart.** The registry is in memory by design,
   because the marketplace owns the install records. Used standalone, there is no
   such owner, so a restart empties the list.
