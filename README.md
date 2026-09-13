@@ -36,10 +36,27 @@ corepack pnpm install
 corepack pnpm dev
 ```
 
+Copy `.env.example` to `.env` first, so SQL simulations have somewhere to write;
+`pnpm dev` and `pnpm start` load it automatically.
+
 The generator listens on `:4300` (`PORT` to change it). The broker listens on
 `localhost:1884` from your machine, and on `civitas-mosquitto:1883` from inside the
 platform network — which is the address the marketplace writes into a demo install's
 datasource, so NiFi finds it without any extra configuration.
+
+## The database
+
+SQL simulations write rows into a database, and the platform polls those same
+tables as a data source. The add-on ships that database rather than asking an
+operator to supply an address: locally it is the `baumkataster-db` container in
+`docker-compose.yml`, in a cluster it is `demo-source-db` in `deploy/demo.yaml`.
+
+The generator reads exactly one variable, `DEMO_DB_DSN`, and has no default —
+a wrong-but-plausible address is the failure this path exists to avoid. Without
+it, every SQL simulation is refused with a message saying so.
+
+An operator with a database of their own deletes the shipped one and points
+`DEMO_DB_DSN` somewhere else. Nothing else changes.
 
 ## The broker
 
@@ -60,13 +77,20 @@ The dev stack must be up first, since the broker joins its `civitas-network`.
 > name `civitas-mosquitto`, so stop the old one before starting this:
 > `docker compose -f ../appstore-addon/demo-broker/docker-compose.yml down`
 
+## The UI
+
+`ui/` is the add-on's own web interface: sign in with Keycloak, see every
+simulation, switch them on and off, watch events arrive, and build or edit a
+scenario field by field. It talks to the API below and to nothing else. See
+`ui/README.md` to run it.
+
 ## API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `PUT` | `/simulations/{id}` | Create or replace. Caller owns the id — the marketplace passes its dataset id |
 | `GET` | `/simulations` | List, for reconciliation after a restart |
-| `GET` | `/simulations/{id}` | Status, including `publishedCount` and `lastPayload` |
+| `GET` | `/simulations/{id}` | Status, including `publishedCount` and `lastPayload`, plus the `input` it was registered with — what the UI edits |
 | `DELETE` | `/simulations/{id}` | Stop and forget |
 | `POST` | `/simulations/{id}/switch_on` · `/switch_off` | Pause and resume without losing the scenario |
 | `GET` | `/simulations/{id}/sample?count=5` | Render without publishing |
@@ -108,6 +132,8 @@ Field keys are dotted paths, so nested payloads need no extra syntax.
 | `enum` | One of `values`, at random |
 | `randomWalk` | Drifts within `[min, max]`, at most `step` per tick. Stateful, so readings look related |
 | `dailyProfile` | Follows the clock — low at night, peaking at `peakHours`. This is what makes data look real |
+| `sequence` | `${prefix}${n}` — the only kind that can mint a unique key for a SQL table |
+| `jitter` | Stateless scatter around `center`. The right kind for coordinates, which `randomWalk` would drag across the map |
 
 ## Design decisions
 
@@ -132,7 +158,11 @@ stopping — is miserable to debug.
 - Deployment packaging (`civitas-component.yaml`, Helm chart, Dockerfile) — one chart
   with two Deployments, the broker gated on a values flag so an operator who already
   has a broker can switch ours off
-- Authz on the control API — required before this ships to municipalities
+- Authz on the control API — required before this ships to municipalities. The
+  UI already requires a session before it proxies anything, but the service
+  itself still accepts unauthenticated calls
+- An event channel (Server-Sent Events) so the UI can show a true live stream
+  instead of polling `lastPayload`
 - Marking generated data as simulated, so it can never be mistaken for real
   measurements on an open-data API
 - Verifying mapped mode live, which is what makes these payloads ingestible
