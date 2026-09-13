@@ -10,11 +10,11 @@ vi.mock("./publisher.js", () => ({
 import { Registry } from "./registry.js";
 import type { SimulationInput } from "./types.js";
 
-function input(url: string): SimulationInput {
+function input(url: string, enabled = true): SimulationInput {
   return {
     transport: { kind: "mqtt", url, topic: "demo/topic" },
     scenario: { intervalSeconds: 10, fields: { value: { kind: "constant", value: 1 } } },
-    enabled: true,
+    enabled,
   };
 }
 
@@ -34,6 +34,32 @@ describe("Registry.put", () => {
     const registry = new Registry();
     await registry.put("sim-ok", input("tcp://broker:1883"));
     expect(registry.list().map((simulation) => simulation.id)).toEqual(["sim-ok"]);
+    await registry.shutdown();
+  });
+});
+
+describe("Registry.setEnabled", () => {
+  it("leaves the simulation paused, with the reason, when resuming fails", async () => {
+    const registry = new Registry();
+    await registry.put("sim-paused", input("tcp://unreachable:1883", false));
+
+    await expect(registry.setEnabled("sim-paused", true)).rejects.toThrow("read ECONNRESET");
+
+    // Without this the simulation reads as active in the UI while nothing runs
+    // behind it, and nothing says why.
+    const [simulation] = registry.list();
+    expect(simulation.enabled).toBe(false);
+    expect(simulation.lastError).toContain("ECONNRESET");
+  });
+
+  it("marks a simulation enabled once it really started", async () => {
+    const registry = new Registry();
+    await registry.put("sim-ok", input("tcp://broker:1883", false));
+
+    const simulation = await registry.setEnabled("sim-ok", true);
+
+    expect(simulation?.enabled).toBe(true);
+    expect(simulation?.lastError).toBeNull();
     await registry.shutdown();
   });
 });

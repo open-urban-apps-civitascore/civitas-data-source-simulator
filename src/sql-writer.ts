@@ -3,11 +3,8 @@ import pg from "pg";
 import type { ResolvedTable } from "./row-schema.js";
 import { SIMULATED_COLUMN, type ColumnType } from "./types.js";
 
-/**
- * SQL output. Unlike the MQTT publisher this owns the table's lifetime: the platform
- * only creates tables at the receiving end of a pipeline, and its pre-release probe
- * checks reachability but never that the table exists.
- */
+// Owns the table's lifetime: the platform only creates tables at the receiving
+// end of a pipeline, and never checks that a source table exists.
 
 const COLUMN_DDL: Record<ColumnType, string> = {
   text: "text",
@@ -41,11 +38,7 @@ export function databaseNameOf(dsn: string): string | null {
   }
 }
 
-/**
- * Write and read addresses are legitimately different strings for the same database
- * (`localhost:5544` here, `baumkataster-db:5432` inside the network), so only the
- * database name is compared — enough to catch writing where nobody reads.
- */
+/** Only the database name is compared: the same database has two addresses. */
 export function assertSameDatabase(writeDsn: string, readDsn: string | undefined): void {
   if (!readDsn) return;
   const write = databaseNameOf(writeDsn);
@@ -60,7 +53,7 @@ export function assertSameDatabase(writeDsn: string, readDsn: string | undefined
 
 export interface SqlWriter {
   ensureTable(): Promise<void>;
-  /** Highest counter already used for `prefix`, so a restart continues the series. */
+  /** Highest counter used for `prefix`, so a restart continues the series. */
   maxSequence(column: string, prefix: string): Promise<number | null>;
   countRows(): Promise<number>;
   write(rows: Record<string, unknown>[]): Promise<number>;
@@ -89,7 +82,7 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
       const definitions = columns.map(
         (column) => `${quoteIdent(column)} ${COLUMN_DDL[spec.columns[column]!]}`,
       );
-      // Appended here, never declared by the scenario, so it cannot be switched off.
+      // Never declared by the scenario, so it cannot be switched off.
       definitions.push(`${quoteIdent(SIMULATED_COLUMN)} boolean NOT NULL DEFAULT true`);
       definitions.push(`PRIMARY KEY (${primaryKey})`);
 
@@ -127,8 +120,7 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
         values.push(...columns.map((column) => row[column] ?? null));
       });
 
-      // Upsert, never delete: the sink only inserts-or-overwrites, so a row removed
-      // here would stay on the map forever.
+      // Upsert, never delete: a row removed here would stay on the map forever.
       const updates = columns
         .filter((column) => column !== spec.primaryKey)
         .map((column) => `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`);

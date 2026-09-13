@@ -2,29 +2,16 @@ import { z } from "zod";
 
 import { resolveTable } from "./row-schema.js";
 
-/**
- * The scenario describes the data a simulated sensor sends — in the USE CASE'S OWN
- * format, not SensorThings. A real device emits its own domain shape, so emitting
- * anything else would make the generator non-replaceable by real hardware, which is
- * the whole point (see docs/exploration/2026-07-28-demo-data-simulator-design.md).
- *
- * Translation into SensorThings is the pipeline's job (a `mapping` node), not ours.
- */
+// Payloads use the use case's own format, not SensorThings. Mapping to
+// SensorThings is the pipeline's job, which keeps a real device a drop-in swap.
 
-/**
- * One field's value source. A closed union so a scenario is validatable and a
- * malformed generator is rejected at registration rather than at publish time.
- */
+/** Closed union, so a bad generator is rejected at registration, not at publish. */
 export const generatorSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("constant"), value: z.unknown() }),
-  /** Current wall-clock time as an ISO-8601 string — the usual `timestamp` field. */
+  /** ISO-8601 timestamp of the publish. */
   z.object({ kind: z.literal("now") }),
   z.object({ kind: z.literal("enum"), values: z.array(z.unknown()).min(1) }),
-  /**
-   * Brownian-ish drift inside [min, max]. Stateful: each tick moves at most `step`
-   * from the previous value, so consecutive readings look related rather than
-   * independent — which is what makes a chart look like a sensor and not noise.
-   */
+  /** Drifts within [min, max], at most `step` per tick. Stateful. */
   z.object({
     kind: z.literal("randomWalk"),
     min: z.number(),
@@ -33,17 +20,13 @@ export const generatorSpecSchema = z.discriminatedUnion("kind", [
     start: z.number().optional(),
     integer: z.boolean().default(false),
   }),
-  /**
-   * A value that follows the clock: low at night, peaking at the given hours. This
-   * is the generator that makes demo data *believable* — a flat random series
-   * between two bounds immediately reads as fake.
-   */
+  /** Follows the clock: low at night, peaking at `peakHours`. */
   z.object({
     kind: z.literal("dailyProfile"),
     min: z.number(),
     max: z.number(),
     peakHours: z.array(z.number().min(0).max(23)).min(1),
-    /** Relative jitter, 0..1, applied to the curve value. */
+    /** Relative jitter, 0..1. */
     noise: z.number().min(0).max(1).default(0.1),
     integer: z.boolean().default(false),
   }),
@@ -54,10 +37,7 @@ export const generatorSpecSchema = z.discriminatedUnion("kind", [
     start: z.number().int().min(0).default(1),
     padTo: z.number().int().min(0).max(12).default(0),
   }),
-  /**
-   * Stateless scatter around `center`. The correct kind for coordinates:
-   * `randomWalk` drifts, which draws a trail across the map instead of a cluster.
-   */
+  /** Stateless scatter. For coordinates; `randomWalk` would draw a trail. */
   z.object({
     kind: z.literal("jitter"),
     center: z.number(),
@@ -80,24 +60,18 @@ export const tableSpecSchema = z.object({
   rowClass: z.string().default("#"),
   /** The whole list when no schema is sent; otherwise per-column overrides. */
   columns: z.record(z.string(), columnTypeSchema).default({}),
-  /**
-   * Optional only when the schema marks a property `x-core-primaryKey`. A key is
-   * never optional in substance: the platform rejects a SQL pipeline without one.
-   */
+  /** Optional only when the schema marks a property `x-core-primaryKey`. */
   primaryKey: z.string().min(1).optional(),
 });
 
 export type TableSpec = z.infer<typeof tableSpecSchema>;
 
-/**
- * Field keys are dotted paths, so nested payloads (`location.lat`) need no extra
- * syntax. The record they build is the whole MQTT message, or one SQL row.
- */
+/** Field keys are dotted paths, so `location.lat` needs no extra syntax. */
 export const scenarioSchema = z.object({
   intervalSeconds: z.number().positive().max(3600).default(10),
   fields: z.record(z.string(), generatorSpecSchema),
 
-  // ── SQL only ────────────────────────────────────────────────────────────────
+  // SQL only.
   table: tableSpecSchema.optional(),
   /** Written at start-up, so the map is never empty. */
   seedRows: z.number().int().min(0).max(10_000).default(0),
@@ -128,9 +102,12 @@ export const sqlTransportSchema = z.object({
 
 export const simulationInputSchema = z
   .object({
+    /** For the simulator's UI. The marketplace registers by id and sends neither. */
+    name: z.string().max(200).optional(),
+    description: z.string().max(2000).optional(),
     transport: z.union([mqttTransportSchema, sqlTransportSchema]),
     scenario: scenarioSchema,
-    /** Registered but paused — lets the marketplace create a simulation without starting it. */
+    /** Registered but paused. */
     enabled: z.boolean().default(true),
   })
   .superRefine((input, ctx) => {
@@ -182,7 +159,7 @@ export const simulationInputSchema = z
       }
     }
 
-    // A column with no generator is NULL in every row — and for the key, a collision.
+    // A column with no generator would be NULL in every row.
     for (const column of Object.keys(columns)) {
       if (!(column in input.scenario.fields) && column !== SIMULATED_COLUMN) {
         ctx.addIssue({

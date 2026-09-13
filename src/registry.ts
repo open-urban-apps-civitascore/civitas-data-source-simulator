@@ -5,18 +5,14 @@ import { resolveTable } from "./row-schema.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
 import type { SimulationInput } from "./types.js";
 
-/**
- * The set of running simulations, held IN MEMORY only.
- *
- * Deliberately stateless: the marketplace already holds the install records, so
- * persisting them here would be a second copy of the same truth — and two copies
- * eventually disagree. After a restart this registry is empty and the marketplace
- * re-registers what should be running. The exception is a SQL sequence counter,
- * whose rows outlive the process — it is read back from the table on every start.
- */
+// In memory only: the marketplace holds the install records, and a second copy
+// would eventually disagree. SQL sequence counters are read back from the table.
 
 export interface SimulationStatus {
   id: string;
+  /** Null when the caller registered without one (the marketplace does). */
+  name: string | null;
+  description: string | null;
   enabled: boolean;
   transport: "mqtt" | "sql";
   /** MQTT only. */
@@ -59,7 +55,7 @@ interface StartedTransport {
   fireImmediately: boolean;
 }
 
-/** A demo tool must not be able to flood a municipal broker — or a municipal database. */
+/** A demo tool must not be able to flood a municipal broker or database. */
 const MAX_SIMULATIONS = 50;
 
 export class SimulationLimitError extends Error {
@@ -103,8 +99,7 @@ export class Registry {
       try {
         await this.start(simulation);
       } catch (error) {
-        // Keep the promise the 502 makes: an unreachable broker or database is
-        // reported, not registered as a simulation that silently produces nothing.
+        // Report an unreachable target instead of registering a silent simulation.
         this.simulations.delete(id);
         throw error;
       }
@@ -117,11 +112,16 @@ export class Registry {
     return simulation ? toStatus(simulation) : null;
   }
 
+  /** The configuration as registered. The status summarises, it cannot rebuild. */
+  getInput(id: string): SimulationInput | null {
+    return this.simulations.get(id)?.input ?? null;
+  }
+
   list(): SimulationStatus[] {
     return [...this.simulations.values()].map(toStatus);
   }
 
-  /** Stop and forget. Does not drop the table: the sink never deletes either. */
+  /** Stop and forget. Does not drop the table. */
   async remove(id: string): Promise<boolean> {
     const simulation = this.simulations.get(id);
     if (!simulation) return false;
@@ -130,19 +130,34 @@ export class Registry {
     return true;
   }
 
-  /** Pause or resume without losing the scenario — useful mid-demo. */
+  /**
+   * Pause or resume without losing the scenario. Resuming connects BEFORE the
+   * simulation is marked enabled: a failed start leaves it paused with the
+   * reason recorded, never marked active with nothing running behind it.
+   */
   async setEnabled(id: string, enabled: boolean): Promise<SimulationStatus | null> {
     const simulation = this.simulations.get(id);
     if (!simulation) return null;
     if (enabled === simulation.input.enabled) return toStatus(simulation);
 
-    simulation.input = { ...simulation.input, enabled };
-    if (enabled) await this.start(simulation);
-    else await this.teardown(simulation);
+    if (!enabled) {
+      simulation.input = { ...simulation.input, enabled: false };
+      await this.teardown(simulation);
+      return toStatus(simulation);
+    }
+
+    try {
+      await this.start(simulation);
+    } catch (error) {
+      await this.teardown(simulation);
+      simulation.lastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
+    simulation.input = { ...simulation.input, enabled: true };
     return toStatus(simulation);
   }
 
-  /** Render without publishing — powers the catalogue's pre-install data preview. */
+  /** Render without publishing. */
   sample(id: string, count: number): Record<string, unknown>[] | null {
     const simulation = this.simulations.get(id);
     if (!simulation) return null;
@@ -173,7 +188,7 @@ export class Registry {
     simulation.publisher = await createPublisher({
       url: transport.url,
       topic: transport.topic,
-      // Unique per simulation — see publisher.ts on why a shared id breaks silently.
+      // Unique per simulation; see publisher.ts.
       clientId: `civitas-demo-generator-${simulation.id}`,
     });
 
@@ -183,8 +198,7 @@ export class Registry {
         await simulation.publisher?.publish(payload);
         this.recordSuccess(simulation, 1, payload);
       } catch (error) {
-        // Keep the timer running: brokers come back, and a simulation that gives
-        // up on the first blip would need a manual restart nobody would notice.
+        // Keep the timer running: brokers come back.
         this.recordFailure(simulation, error);
       }
     };
@@ -196,7 +210,7 @@ export class Registry {
     if (transport.kind !== "sql") throw new Error("not a sql transport");
     const scenario = simulation.input.scenario;
     const spec = scenario.table;
-    // Both are guaranteed by simulationInputSchema's refinement; assert for types.
+    // Guaranteed by the schema refinement; asserted for the types.
     if (!spec || scenario.maxRows === undefined) {
       throw new Error("A SQL simulation needs a table description and maxRows.");
     }
@@ -235,7 +249,7 @@ export class Registry {
       try {
         await writeRows(scenario.seedRows);
       } catch (error) {
-        // Fatal: a seeding failure means the table is wrong, not that the DB blinked.
+        // Fatal: seeding fails when the table is wrong, not on a blip.
         await writer.close().catch(() => undefined);
         simulation.writer = null;
         throw error;
@@ -293,6 +307,8 @@ function toStatus(simulation: Simulation): SimulationStatus {
   const transport = simulation.input.transport;
   return {
     id: simulation.id,
+    name: simulation.input.name ?? null,
+    description: simulation.input.description ?? null,
     enabled: simulation.input.enabled,
     transport: transport.kind,
     topic: transport.kind === "mqtt" ? transport.topic : null,

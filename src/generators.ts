@@ -1,24 +1,16 @@
 import type { GeneratorSpec, Scenario } from "./types.js";
 
-/**
- * Value generation. Pure except for `Math.random`, and all state is held in the
- * closure a generator returns — so a simulation's fields cannot interfere with
- * another's, and a restart simply starts the walks over.
- */
+// Each generator holds its state in its own closure, so fields never interfere.
 
 export type ValueFn = (now: Date) => unknown;
 
-/** Hours between two clock hours, going the short way round midnight (0..12). */
+/** Hours apart, the short way round midnight (0..12). */
 function hourDistance(a: number, b: number): number {
   const raw = Math.abs(a - b);
   return Math.min(raw, 24 - raw);
 }
 
-/**
- * Bell curve around the nearest peak hour. `sigma` of 2.5 gives a rush hour that
- * is clearly over by ~5 hours out, which matches how traffic and consumption
- * curves actually look.
- */
+/** Bell curve around the nearest peak. sigma 2.5 ends the rush ~5 hours out. */
 function dailyShape(hour: number, peakHours: number[]): number {
   const sigma = 2.5;
   const nearest = Math.min(...peakHours.map((peak) => hourDistance(hour, peak)));
@@ -41,7 +33,7 @@ export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): Value
       return () => spec.values[Math.floor(Math.random() * spec.values.length)];
 
     case "randomWalk": {
-      // Start mid-range unless told otherwise, so the first reading is not an outlier.
+      // Start mid-range, so the first reading is not an outlier.
       let current = spec.start ?? (spec.min + spec.max) / 2;
       return () => {
         current = clamp(current + (Math.random() * 2 - 1) * spec.step, spec.min, spec.max);
@@ -59,8 +51,7 @@ export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): Value
       };
 
     case "sequence": {
-      // Counter in memory, rows on disk: without `resumeFrom` a restart collides
-      // with every existing row while still reporting success.
+      // Without `resumeFrom` a restart collides with every existing row.
       let next = resumeFrom ?? spec.start;
       return () => {
         const value = next;
@@ -78,7 +69,7 @@ export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): Value
   }
 }
 
-/** Reads the counter back out of an existing key; null if it does not match. */
+/** Counter out of an existing key; null if it does not match. */
 export function sequenceValueOf(key: string, prefix: string): number | null {
   if (!key.startsWith(prefix)) return null;
   const suffix = key.slice(prefix.length);
@@ -86,7 +77,7 @@ export function sequenceValueOf(key: string, prefix: string): number | null {
   return Number.parseInt(suffix, 10);
 }
 
-/** Write `value` at a dotted path, creating intermediate objects as needed. */
+/** Write at a dotted path, creating intermediate objects. */
 export function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const segments = path.split(".");
   let cursor = target;
@@ -101,14 +92,10 @@ export function setPath(target: Record<string, unknown>, path: string, value: un
   cursor[segments.at(-1)!] = value;
 }
 
-/**
- * Build one scenario's field generators once, at registration. Returned as a
- * closure set so stateful generators (randomWalk) keep their position between
- * ticks instead of restarting on every message.
- */
+/** Built once at registration, so stateful generators keep their position. */
 export function compileScenario(
   scenario: Scenario,
-  /** Field name → next `sequence` value, read back from the table. */
+  /** Field name to next `sequence` value, read back from the table. */
   resume: Record<string, number> = {},
 ): (now: Date) => Record<string, unknown> {
   const fields = Object.entries(scenario.fields).map(

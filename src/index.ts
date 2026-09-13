@@ -5,14 +5,7 @@ import { compileScenario } from "./generators.js";
 import { Registry, SimulationLimitError, renderSample } from "./registry.js";
 import { scenarioSchema, simulationInputSchema } from "./types.js";
 
-/**
- * Control plane for the demo data generator.
- *
- * Two directions of traffic, deliberately separate: REST in (what to generate, per
- * install, decided by the marketplace) and MQTT out (the data itself). MQTT alone
- * cannot carry per-install configuration, which is why this service has an API at
- * all.
- */
+// Control plane: REST in (what to generate), MQTT or SQL out (the data).
 
 const registry = new Registry();
 const app = express();
@@ -28,20 +21,18 @@ app.get("/simulations", (_req, res) => {
   res.json({ simulations: registry.list() });
 });
 
+/** Status plus the configuration it was built from, so a UI can edit it. */
 app.get("/simulations/:id", (req, res) => {
   const simulation = registry.get(req.params.id);
   if (!simulation) {
     res.status(404).json({ error: "No such simulation." });
     return;
   }
-  res.json(simulation);
+  res.json({ ...simulation, input: registry.getInput(req.params.id) });
 });
 
-/**
- * PUT, not POST: the caller owns the id (the marketplace passes its dataset id), so
- * uninstall can DELETE without a lookup table and a retry converges instead of
- * creating a second publisher.
- */
+// PUT, not POST: the caller owns the id, so a retry converges and uninstall
+// can DELETE without a lookup table.
 app.put("/simulations/:id", async (req, res) => {
   const parsed = simulationInputSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -55,8 +46,7 @@ app.put("/simulations/:id", async (req, res) => {
       res.status(error.status).json({ error: error.message });
       return;
     }
-    // Most likely the broker is unreachable. Report it rather than registering a
-    // simulation that silently never publishes.
+    // Usually an unreachable broker.
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -67,24 +57,32 @@ app.delete("/simulations/:id", async (req, res) => {
 });
 
 app.post("/simulations/:id/switch_on", async (req, res) => {
-  const simulation = await registry.setEnabled(req.params.id, true);
-  if (!simulation) {
-    res.status(404).json({ error: "No such simulation." });
-    return;
+  try {
+    const simulation = await registry.setEnabled(req.params.id, true);
+    if (!simulation) {
+      res.status(404).json({ error: "No such simulation." });
+      return;
+    }
+    res.json(simulation);
+  } catch (error) {
+    // The simulation stays registered and paused, with the reason on it.
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
-  res.json(simulation);
 });
 
 app.post("/simulations/:id/switch_off", async (req, res) => {
-  const simulation = await registry.setEnabled(req.params.id, false);
-  if (!simulation) {
-    res.status(404).json({ error: "No such simulation." });
-    return;
+  try {
+    const simulation = await registry.setEnabled(req.params.id, false);
+    if (!simulation) {
+      res.status(404).json({ error: "No such simulation." });
+      return;
+    }
+    res.json(simulation);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
-  res.json(simulation);
 });
 
-/** Preview an existing simulation's output without publishing it. */
 app.get("/simulations/:id/sample", (req, res) => {
   const count = Math.min(Number(req.query.count ?? 5) || 5, 50);
   const records = registry.sample(req.params.id, count);
@@ -95,10 +93,7 @@ app.get("/simulations/:id/sample", (req, res) => {
   res.json({ records });
 });
 
-/**
- * Render a scenario that is not registered — so the marketplace can show "what this
- * data will look like" on a catalogue page, for a use case nobody has installed.
- */
+/** Render an unregistered scenario, for a preview before anything is installed. */
 app.post("/sample", (req, res) => {
   const parsed = scenarioSchema.safeParse(req.body?.scenario);
   if (!parsed.success) {
@@ -115,8 +110,7 @@ const server = app.listen(PORT, () => {
   console.log(`[demo-generator] listening on :${PORT}`);
 });
 
-// Stop publishers before the process dies, so the broker sees clean disconnects
-// rather than keepalive timeouts.
+// Clean disconnects rather than keepalive timeouts.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     void registry.shutdown().finally(() => server.close(() => process.exit(0)));
