@@ -3,3 +3,8 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+
+# UI app
+ui/node_modules/
+ui/.next/
+ui/next-env.d.ts

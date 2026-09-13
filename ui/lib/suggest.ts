@@ -1,0 +1,46 @@
+// One generator per property of a portal data structure. Every pick is a
+// suggestion the user reviews in the editor.
+import type { DataStructureProperty, FieldSpec, GeneratorSpec, PortalDataStructure, SimulationDraft } from "./types";
+
+const MUSTERHAUSEN = { lat: 49.7913, lon: 9.9534 };
+
+function suggestSpec(p: DataStructureProperty): GeneratorSpec {
+  const lower = p.name.toLowerCase();
+  if (p.primaryKey) return { kind: "sequence", prefix: `${p.name.replace(/_?id$/i, "") || "row"}-`, start: 1, padTo: 4 };
+  if (p.format === "date-time") return { kind: "now" };
+  if (p.enum && p.enum.length > 0) return { kind: "enum", values: p.enum };
+  if (p.type === "boolean") return { kind: "enum", values: [true, false] };
+  if (/lat(itude)?$/.test(lower)) return { kind: "jitter", center: MUSTERHAUSEN.lat, spread: 0.004, precision: 6 };
+  if (/lon(gitude)?$/.test(lower)) return { kind: "jitter", center: MUSTERHAUSEN.lon, spread: 0.006, precision: 6 };
+  if (p.type === "string") return { kind: "constant", value: `${p.name}-001` };
+
+  const min = p.minimum ?? 0;
+  const max = p.maximum ?? 100;
+  const integer = p.type === "integer";
+  // Counts and loads follow the clock; everything else drifts.
+  if (/count|anzahl|power|load|leistung/.test(lower)) {
+    return { kind: "dailyProfile", min, max: Math.round(max * 0.4), peakHours: [8, 17], noise: 0.15, integer };
+  }
+  const span = max - min;
+  return { kind: "randomWalk", min, max, step: Math.max(span / 40, integer ? 1 : 0.1), start: min + span / 2, integer };
+}
+
+export function draftFromDataStructure(ds: PortalDataStructure): SimulationDraft {
+  const fields: FieldSpec[] = ds.properties.map((p) => ({ name: p.name, spec: suggestSpec(p) }));
+  const primaryKey = ds.properties.find((p) => p.primaryKey)?.name;
+  const isTable = Boolean(primaryKey);
+  const slug = ds.name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+  return {
+    name: `${ds.name} (Simulation)`,
+    description: `Aus der Portal-Datenstruktur ${ds.name} ${ds.version} abgeleitet.`,
+    enabled: false,
+    transport: isTable
+      ? { kind: "sql", table: `${ds.domain.toLowerCase()}.${slug.replace(/-/g, "_")}` }
+      : { kind: "mqtt", url: "mqtt://civitas-mosquitto:1883", topic: `civitas/${slug}` },
+    scenario: {
+      intervalSeconds: isTable ? 60 : 10,
+      fields,
+      ...(isTable ? { primaryKey, seedRows: 100, insertsPerTick: 1, maxRows: 5000 } : {}),
+    },
+  };
+}
