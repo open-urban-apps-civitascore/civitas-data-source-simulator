@@ -136,6 +136,13 @@ spec:
             - name: DEMO_DB_DSN
               valueFrom:
                 secretKeyRef: { name: demo-source-db, key: DEMO_DB_DSN }
+            # Every request must carry a Keycloak token from this realm. The
+            # service refuses to start if neither this nor SIMULATOR_AUTH_DISABLED
+            # is set, so forgetting it cannot leave the API open by accident.
+            - name: AUTH_ISSUER_URL
+              value: http://keycloak.civitas.svc.cluster.local:8080/realms/civitas-core
+            # Optional: also demand a role, once one exists in the realm.
+            # - { name: AUTH_REQUIRED_ROLE, value: simulator }
           readinessProbe:
             httpGet: { path: /healthz, port: 4300 }
           resources:

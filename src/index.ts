@@ -1,6 +1,7 @@
 import express from "express";
 import { z } from "zod";
 
+import { createAuthMiddleware, readAuthConfig } from "./auth.js";
 import { compileScenario } from "./generators.js";
 import { Registry, SimulationLimitError, renderSample } from "./registry.js";
 import { scenarioSchema, simulationInputSchema } from "./types.js";
@@ -10,11 +11,15 @@ import { scenarioSchema, simulationInputSchema } from "./types.js";
 const registry = new Registry();
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+// Refuses to start when no issuer is configured, so a deployment that forgets
+// it fails loudly instead of quietly accepting everyone.
+const authConfig = readAuthConfig();
+app.use(createAuthMiddleware(authConfig));
 
 const PORT = Number(process.env.PORT ?? 4300);
 
 app.get("/healthz", (_req, res) => {
-  res.json({ status: "ok", simulations: registry.list().length });
+  res.json({ status: "ok", simulations: registry.list().length, authenticated: authConfig !== null });
 });
 
 app.get("/simulations", (_req, res) => {
@@ -108,6 +113,11 @@ app.post("/sample", (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`[demo-generator] listening on :${PORT}`);
+  console.log(
+    authConfig
+      ? `[demo-generator] bearer tokens required, realm ${authConfig.issuer}`
+      : "[demo-generator] NO AUTHENTICATION: anyone who can reach this port may use it",
+  );
 });
 
 // Clean disconnects rather than keepalive timeouts.

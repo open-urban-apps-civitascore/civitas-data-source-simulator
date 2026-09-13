@@ -44,6 +44,25 @@ The generator listens on `:4300` (`PORT` to change it). The broker listens on
 platform network — which is the address the marketplace writes into a demo install's
 datasource, so NiFi finds it without any extra configuration.
 
+## Authentication
+
+The control API verifies a Keycloak token on every request, the same way the
+platform's own backend does: the token itself is checked, rather than trusting a
+header a gateway claims to have set.
+
+It fails closed. The service refuses to start unless it is told either which
+realm to trust (`AUTH_ISSUER_URL`) or, explicitly, that checking is off
+(`SIMULATOR_AUTH_DISABLED=1`). The failure this prevents is a deployment that
+accepts every caller because one variable was forgotten. Liveness stays open,
+since probes carry no token.
+
+`AUTH_REQUIRED_ROLE` additionally demands a realm or client role, once one
+exists in the realm.
+
+One caller is not ready for this yet: the marketplace registers simulations
+without a token, so switching the check on in an instance that installs use
+cases will break installs until the marketplace has a service account.
+
 ## The database
 
 SQL simulations write rows into a database, and the platform polls those same
