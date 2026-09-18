@@ -26,7 +26,11 @@ function suggestSpec(p: DataStructureProperty): GeneratorSpec {
 }
 
 export function draftFromDataStructure(ds: PortalDataStructure): SimulationDraft {
-  const fields: FieldSpec[] = ds.properties.map((p) => ({ name: p.name, spec: suggestSpec(p) }));
+  // A property with no possible generator is left out: a field that cannot be
+  // produced would be rejected by the service, or silently always null.
+  const fields: FieldSpec[] = ds.properties
+    .filter((p) => !p.unsupported)
+    .map((p) => ({ name: p.name, spec: suggestSpec(p) }));
   const primaryKey = ds.properties.find((p) => p.primaryKey)?.name;
   const isTable = Boolean(primaryKey);
   const slug = ds.name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();

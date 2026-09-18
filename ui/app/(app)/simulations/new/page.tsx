@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { AppHeader } from "@/components/layout/app-header";
 import { SimulationEditor } from "@/components/simulations/simulation-editor";
-import { findDataStructure } from "@/lib/portal-datastructures";
+import { findDataStructure } from "@/lib/server/datastructures";
 import { draftFromDataStructure } from "@/lib/suggest";
 import { requireSession } from "@/lib/server/session";
 
@@ -18,7 +18,7 @@ export default async function NewSimulationPage({
 }) {
   await requireSession();
   const { from, mode } = await searchParams;
-  const ds = findDataStructure(from);
+  const ds = await findDataStructure(from);
 
   return (
     <>

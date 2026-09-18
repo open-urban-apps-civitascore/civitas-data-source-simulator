@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Key, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Key, Plus } from "lucide-react";
 
 import { PageBody } from "@/components/layout/page-body";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PORTAL_DATA_STRUCTURES } from "@/lib/portal-datastructures";
-import type { DataStructureProperty, SimulationStatus } from "@/lib/types";
+import type { DataStructureProperty, PortalDataStructure, SimulationStatus } from "@/lib/types";
 
 const TYPE_LABEL: Record<string, string> = {
   string: "Text",
@@ -23,7 +22,17 @@ function typeOf(p: DataStructureProperty): string {
   return TYPE_LABEL[p.type];
 }
 
-export function DataStructureList({ simulations }: { simulations: SimulationStatus[] }) {
+export function DataStructureList({
+  structures,
+  source,
+  notice,
+  simulations,
+}: {
+  structures: PortalDataStructure[];
+  source: "portal" | "examples";
+  notice: string | null;
+  simulations: SimulationStatus[];
+}) {
   const [open, setOpen] = useState<string | null>(null);
 
   return (
@@ -31,13 +40,30 @@ export function DataStructureList({ simulations }: { simulations: SimulationStat
         <div className="mb-4">
           <h1>Datenstrukturen aus dem Portal</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Die Datenstrukturen dieser CIVITAS/CORE-Instanz, gelesen aus dem Portal (Model Forge). Aus jeder lässt sich mit einem Klick
-            eine passende Simulation ableiten: pro Eigenschaft ein Generator-Vorschlag, den du im Editor anpasst.
+            {source === "portal"
+              ? "Die Datenstrukturen dieser CIVITAS/CORE-Instanz, gelesen aus dem Portal. "
+              : "Mitgelieferte Beispiele, nicht die Strukturen dieser Instanz. "}
+            Aus jeder lässt sich mit einem Klick eine passende Simulation ableiten: pro Eigenschaft
+            ein Generator-Vorschlag, den du im Editor anpasst.
           </p>
         </div>
 
+        {notice ? (
+          <div className="mb-4 flex items-start gap-2 rounded-md border border-warn/40 bg-warn/20 px-3 py-2 text-sm">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>{notice}</span>
+          </div>
+        ) : null}
+
+        {structures.length === 0 ? (
+          <p className="rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+            Diese Instanz hat noch keine Datenstrukturen. Installiere einen Use Case im Marktplatz,
+            dann erscheinen sie hier.
+          </p>
+        ) : null}
+
         <div className="grid gap-3">
-          {PORTAL_DATA_STRUCTURES.map((ds) => {
+          {structures.map((ds) => {
             const expanded = open === ds.urn;
             const sims = simulations.filter((s) => (s.description ?? "").includes(ds.name));
             return (

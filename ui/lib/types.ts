@@ -108,6 +108,7 @@ export interface DataStructureProperty {
   maximum?: number;
   primaryKey?: boolean;
   required: boolean;
+  unsupported?: boolean;
 }
 
 export interface PortalDataStructure {
