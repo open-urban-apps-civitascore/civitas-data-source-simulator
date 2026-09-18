@@ -1,0 +1,89 @@
+{{- if .Values.ui.enabled -}}
+{{- $name := include "simulator.uiName" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ui
+  template:
+    metadata:
+      labels:
+        {{- include "simulator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: ui
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ui.service.targetPort }}
+          env:
+            - name: PORT
+              value: {{ .Values.ui.service.targetPort | quote }}
+            - name: AUTH_TRUST_HOST
+              value: "true"
+            - name: NEXTAUTH_URL
+              value: {{ .Values.ui.publicUrl | quote }}
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ui.nextauthSecret.secretName }}
+                  key: {{ .Values.ui.nextauthSecret.key }}
+            - name: KEYCLOAK_CLIENT_ID
+              value: {{ .Values.ui.keycloak.clientId | quote }}
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ui.keycloak.clientSecret.secretName }}
+                  key: {{ .Values.ui.keycloak.clientSecret.key }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ .Values.ui.keycloak.issuer | quote }}
+            {{- with .Values.ui.keycloak.internalIssuer }}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: KEYCLOAK_ID_TOKEN_ALG
+              value: {{ .Values.ui.keycloak.idTokenAlg | quote }}
+            # The control API, reached in-cluster. The browser never calls it.
+            - name: GENERATOR_BASE_URL
+              value: {{ include "simulator.apiAddress" . | quote }}
+            - name: PORTAL_BACKEND_BASE_URL
+              value: {{ .Values.ui.portalBackendBaseUrl | quote }}
+            - name: NODE_TLS_REJECT_UNAUTHORIZED
+              value: {{ .Values.ui.nodeTlsRejectUnauthorized | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ui
+  ports:
+    - name: http
+      port: {{ .Values.ui.service.port }}
+      targetPort: http
+{{- end }}

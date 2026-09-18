@@ -1,0 +1,39 @@
+---
+{{- $this := .Values.demoDataGenerator.simulator }}
+{{- $global := .Values.global }}
+
+generator:
+  image:
+    repository: {{ $global.imageRegistry }}/civitas-demo-data-generator
+  auth:
+    # The instance's own realm. Without this the control API refuses to start,
+    # which is the point: a forgotten value must not leave it open.
+    issuerUrl: https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}
+
+ui:
+  image:
+    repository: {{ $global.imageRegistry }}/civitas-demo-data-generator-ui
+  publicUrl: https://{{ $this.subdomain }}.{{ $global.domain }}
+  keycloak:
+    clientId: demo-data-generator
+    issuer: https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}
+    clientSecret:
+      secretName: keycloak-client-demo-data-generator
+      key: client-secret
+  nextauthSecret:
+    secretName: demo-data-generator-nextauth-secret
+    key: secret
+  # Data structures are read through the gateway, never from the backend direct.
+  portalBackendBaseUrl: http://apisix-gateway.{{ include "civitas.namespace" (dict "global" $global "suffix" "apisix") }}.svc.cluster.local/v1
+
+# Simulation-only, both of them. A municipality's own broker and database are
+# not ours to own: switch these off and point the use case at theirs.
+broker:
+  enabled: true
+
+database:
+  enabled: true
+  auth:
+    existingSecret:
+      secretName: demo-data-generator-db
+      key: password

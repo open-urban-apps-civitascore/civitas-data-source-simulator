@@ -1,0 +1,29 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed as {{ .Release.Name }}.
+
+The control API answers in-cluster at:
+  {{ include "simulator.apiAddress" . }}
+
+{{ if .Values.ui.enabled -}}
+The web interface is served at {{ .Values.ui.publicUrl }} once an APISIX route
+points at the service {{ include "simulator.uiName" . }}.
+{{- else -}}
+The web interface is switched off; only the control API is running.
+{{- end }}
+
+{{ if .Values.broker.enabled -}}
+Simulations publish to {{ include "simulator.brokerAddress" . }}. Point the use
+case's datasource at the same address, or switch broker.enabled off and use
+your own.
+{{- else -}}
+No broker is deployed: MQTT simulations must name one that already exists.
+{{- end }}
+
+{{ if not .Values.database.enabled -}}
+No database is deployed: SQL simulations will be refused until DEMO_DB_DSN
+names one.
+{{- end }}
+
+{{ if .Values.generator.auth.disabled -}}
+WARNING: token checking is switched off. Anyone who can reach the control API
+inside the cluster may create, change and delete simulations.
+{{- end }}

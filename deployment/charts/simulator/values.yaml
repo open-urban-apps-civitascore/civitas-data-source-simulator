@@ -1,0 +1,105 @@
+# Four workloads in one chart: the control API, the web interface, and the two
+# things simulations write into. The broker and the database are switchable,
+# because an operator who already runs them should not be given a second set.
+
+nameOverride: ""
+
+global:
+  # Namespace-qualified suffix the in-cluster addresses are built from.
+  # Left empty, the release namespace is used.
+  namespace: ""
+
+# --- The control API (never reached by a browser) --------------------------
+generator:
+  replicaCount: 1
+  image:
+    repository: civitas-demo-data-generator
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 4300
+  resources: {}
+  # dailyProfile peaks are written in local hours; UTC would shift every curve.
+  timezone: Europe/Berlin
+  auth:
+    # The realm whose tokens the control API accepts. The service REFUSES TO
+    # START unless this or `disabled` below is set, so a deployment that forgets
+    # it fails loudly instead of quietly accepting every caller.
+    issuerUrl: "https://idm.civitas.test/realms/core"
+    # Optional: also demand a realm or client role.
+    requiredRole: ""
+    # Emergency switch only. With this true, anyone who can reach the service
+    # inside the cluster may create, change and delete simulations.
+    disabled: false
+
+# --- The web interface (the only browser-facing part) ----------------------
+ui:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: civitas-demo-data-generator-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+    targetPort: 3003
+  resources: {}
+  # The public URL the browser reaches this app at.
+  publicUrl: "https://simulator.civitas.test"
+  keycloak:
+    clientId: demo-data-generator
+    # Browser-facing issuer (redirects, id_token validation).
+    issuer: "https://idm.civitas.test/realms/core"
+    # Container-internal issuer (token, userinfo, jwks) — the dual-issuer trick.
+    internalIssuer: ""
+    # Keycloak's default is RS256; a hardened realm signs with ES256.
+    idTokenAlg: "RS256"
+    clientSecret:
+      secretName: keycloak-client-demo-data-generator
+      key: client-secret
+  nextauthSecret:
+    secretName: demo-data-generator-nextauth-secret
+    key: secret
+  # Where the instance's data structures are read from, INCLUDING /v1.
+  portalBackendBaseUrl: "http://apisix-gateway.apisix.svc.cluster.local/v1"
+  # Self-signed cluster CA: Node rejects the chain otherwise. Same TODO as the
+  # marketplace and the portal frontend carry.
+  nodeTlsRejectUnauthorized: "0"
+
+# --- The broker simulations publish into -----------------------------------
+# Simulation-only. A municipality's own broker is not ours to own: point the
+# use case's datasource at theirs and switch this off.
+broker:
+  enabled: true
+  image:
+    repository: eclipse-mosquitto
+    tag: "2"
+    pullPolicy: IfNotPresent
+  service:
+    port: 1883
+  resources: {}
+
+# --- The database SQL simulations write into -------------------------------
+database:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  resources: {}
+  auth:
+    database: demo_source
+    username: demo
+    # Secret holding the password, created by the deployment pipeline.
+    existingSecret:
+      secretName: demo-data-generator-db
+      key: password
+  persistence:
+    # Off by default: everything here is disposable demo data, and the control
+    # API forgets its simulations on restart anyway. Turn it on and set a size
+    # for a demo that must survive a pod restart.
+    enabled: false
+    size: 1Gi
+    storageClass: ""

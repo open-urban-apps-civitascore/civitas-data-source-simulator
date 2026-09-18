@@ -1,0 +1,11 @@
+---
+# Only the web interface is reachable from a browser. The control API is
+# deliberately absent: the interface's own server calls it inside the cluster,
+# and a route would put an API that changes what gets published on the public
+# internet for no gain.
+demo-data-generator-ui:
+  name: demo-data-generator-ui
+  description: 'Demo data simulator web interface'
+  upstream: demo-data-generator-simulator-ui.{{ include "civitas.namespace" (dict "global" .Values.global "suffix" "demo-data-generator") }}.svc.cluster.local:80 # yamllint disable-line rule:line-length
+  subDomain: simulator
+  uri: '/*'

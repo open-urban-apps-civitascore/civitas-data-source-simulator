@@ -1,0 +1,4 @@
+---
+component: demoDataGenerator
+parts:
+  - name: simulator

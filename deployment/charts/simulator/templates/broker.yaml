@@ -1,0 +1,73 @@
+{{- if .Values.broker.enabled -}}
+{{- $name := include "simulator.brokerName" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+data:
+  mosquitto.conf: |
+    listener {{ .Values.broker.service.port }}
+    allow_anonymous true
+    persistence false
+    log_dest stdout
+    log_type notice
+    connection_messages true
+    max_connections 100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: broker
+  template:
+    metadata:
+      labels:
+        {{- include "simulator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: broker
+    spec:
+      containers:
+        - name: mosquitto
+          image: "{{ .Values.broker.image.repository }}:{{ .Values.broker.image.tag }}"
+          imagePullPolicy: {{ .Values.broker.image.pullPolicy }}
+          args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+          ports:
+            - name: mqtt
+              containerPort: {{ .Values.broker.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config
+              readOnly: true
+          resources:
+            {{- toYaml .Values.broker.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: broker
+  ports:
+    - name: mqtt
+      port: {{ .Values.broker.service.port }}
+      targetPort: mqtt
+{{- end }}

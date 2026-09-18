@@ -1,0 +1,6 @@
+apiVersion: v2
+name: civitas-demo-data-generator
+description: Helm Chart for the CIVITAS/CORE (v2) demo data simulator add-on
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,29 @@
+---
+{{- $this := .Values.demoDataGenerator.simulator }}
+{{- $global := .Values.global }}
+
+generator:
+  replicaCount: 1
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 192Mi}
+
+ui:
+  replicaCount: 1
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+broker:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+
+database:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  persistence:
+    # Demo data is disposable, and the control API forgets its simulations on
+    # restart anyway, so there is nothing here worth a volume.
+    enabled: false

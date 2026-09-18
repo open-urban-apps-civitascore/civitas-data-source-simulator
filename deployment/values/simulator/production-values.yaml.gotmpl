@@ -1,0 +1,30 @@
+---
+{{- $this := .Values.demoDataGenerator.simulator }}
+{{- $global := .Values.global }}
+
+generator:
+  # Deliberately one: simulations live in memory, so a second replica would
+  # publish a second copy of every stream to the same broker.
+  replicaCount: 1
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 384Mi}
+
+ui:
+  replicaCount: 2
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+
+broker:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+database:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  persistence:
+    enabled: true
+    size: 5Gi

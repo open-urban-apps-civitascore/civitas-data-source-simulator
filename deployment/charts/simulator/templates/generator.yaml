@@ -1,0 +1,88 @@
+{{- $name := include "simulator.generatorName" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.generator.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "simulator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: generator
+          image: "{{ .Values.generator.image.repository }}:{{ .Values.generator.image.tag }}"
+          imagePullPolicy: {{ .Values.generator.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.generator.service.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.generator.service.port | quote }}
+            - name: TZ
+              value: {{ .Values.generator.timezone | quote }}
+            {{- if .Values.generator.auth.disabled }}
+            # Emergency switch: no token is checked on any request.
+            - name: SIMULATOR_AUTH_DISABLED
+              value: "1"
+            {{- else }}
+            - name: AUTH_ISSUER_URL
+              value: {{ required "generator.auth.issuerUrl is required unless generator.auth.disabled is true" .Values.generator.auth.issuerUrl | quote }}
+            {{- end }}
+            {{- with .Values.generator.auth.requiredRole }}
+            - name: AUTH_REQUIRED_ROLE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.database.enabled }}
+            - name: DEMO_DB_DSN
+              value: "postgres://{{ .Values.database.auth.username }}:$(DEMO_DB_PASSWORD)@{{ include "simulator.databaseName" . }}.{{ include "simulator.namespace" . }}.svc.cluster.local:{{ .Values.database.service.port }}/{{ .Values.database.auth.database }}"
+            - name: DEMO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret.secretName }}
+                  key: {{ .Values.database.auth.existingSecret.key }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.generator.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: {{ .Values.generator.service.port }}
+      targetPort: http

@@ -1,0 +1,6 @@
+---
+demoDataGenerator:
+  simulator:
+    enabled: true
+    namespace: {{ include "civitas.namespace" (dict "global" .Values.global "suffix" "demo-data-generator") }}
+    subdomain: simulator

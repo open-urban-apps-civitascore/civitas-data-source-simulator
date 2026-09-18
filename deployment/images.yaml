@@ -1,0 +1,5 @@
+---
+demoDataGenerator:
+  simulator:
+    - civitas-demo-data-generator
+    - civitas-demo-data-generator-ui

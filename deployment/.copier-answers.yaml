@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: v2.0-beta-2-gb7799e2
+_src_path: .
+componentName: Demo Data Generator
+componentSlug: demo-data-generator
+releases: simulator
+shortDescription: Simulated sensor data, so a freshly installed use case shows something

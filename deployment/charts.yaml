@@ -1,0 +1,7 @@
+---
+# One chart, four workloads: control API, web interface, and the broker and
+# database simulations write into. The last two are switchable, so an operator
+# who already runs them is not handed a second set.
+demoDataGenerator:
+  simulator:
+    chart: charts/simulator
