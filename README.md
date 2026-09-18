@@ -59,9 +59,10 @@ since probes carry no token.
 `AUTH_REQUIRED_ROLE` additionally demands a realm or client role, once one
 exists in the realm.
 
-One caller is not ready for this yet: the marketplace registers simulations
-without a token, so switching the check on in an instance that installs use
-cases will break installs until the marketplace has a service account.
+The marketplace sends a token too, as of 2026-09-14. It forwards the token of
+whoever clicked rather than an identity of its own, because every one of its
+calls happens inside an action that already required a session. So the simulator
+records the person who acted, not a shared robot.
 
 ## The database
 
@@ -95,6 +96,14 @@ The dev stack must be up first, since the broker joins its `civitas-network`.
 > Replaces `appstore-addon/demo-broker/docker-compose.yml`. Both use the container
 > name `civitas-mosquitto`, so stop the old one before starting this:
 > `docker compose -f ../appstore-addon/demo-broker/docker-compose.yml down`
+
+## Deploying it
+
+`deployment/` is the CIVITAS component: copy it into the deployment
+repository's `components/` and add one line to the component list. It carries
+its own chart, which deploys the control API, the web interface, and the broker
+and database simulations write into. The last two are switchable for an
+operator who already runs their own. See `deployment/README.md`.
 
 ## The UI
 
@@ -173,17 +182,17 @@ stopping — is miserable to debug.
 
 ## Not done yet
 
-- Marketplace wiring (register on AVAILABLE, unregister on uninstall)
-- Deployment packaging (`civitas-component.yaml`, Helm chart, Dockerfile) — one chart
-  with two Deployments, the broker gated on a values flag so an operator who already
-  has a broker can switch ours off
-- Authz on the control API — required before this ships to municipalities. The
-  UI already requires a session before it proxies anything, but the service
-  itself still accepts unauthenticated calls
 - An event channel (Server-Sent Events) so the UI can show a true live stream
   instead of polling `lastPayload`
-- Marking generated data as simulated, so it can never be mistaken for real
-  measurements on an open-data API
+- Deciding where "this is simulated" belongs. The current answer is a
+  `simuliert` column the SQL writer adds to every row, which sits badly against
+  this repo's one design rule: a real device is meant to be a drop-in
+  replacement, and it would never send that column. The likelier right answer is
+  the metadata layer — the dataset says it carries demo data, and neither the
+  rows nor the messages are touched. That would also remove the column rather
+  than add a matching flag to MQTT payloads.
+- No role is demanded yet: any signed-in person may change simulations. The
+  service supports `AUTH_REQUIRED_ROLE`, but no such role exists in the realm
 - Verifying mapped mode live, which is what makes these payloads ingestible
 
 ## Funding
