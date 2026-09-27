@@ -195,6 +195,13 @@ stopping — is miserable to debug.
   service supports `AUTH_REQUIRED_ROLE`, but no such role exists in the realm
 - Verifying mapped mode live, which is what makes these payloads ingestible
 
+## License
+
+[EUPL-1.2](./LICENSE) - the licence CIVITAS/CORE uses upstream.
+
+The funder logos in `logo/` are the trademarks of their owners. They are supplied
+for the funding notice and are not licensed under the EUPL.
+
 ## Funding
 
 This project is funded by the **Federal Ministry of Research, Technology and Space (BMFTR)** as part of the **[Prototype Fund](https://prototypefund.de/)**, an initiative by the Open Knowledge Foundation Germany. 
