@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+ui
+deploy
+deployment
+docs
+logo
+broker
+README.md
+Dockerfile
+docker-compose.yml

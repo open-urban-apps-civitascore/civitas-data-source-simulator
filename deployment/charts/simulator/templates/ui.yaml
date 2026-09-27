@@ -21,6 +21,12 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        # Numeric, for the same reason as the control API. The interface's
+        # Dockerfile creates `nextjs` with uid 1001; its group resolves to
+        # nogroup (65533) because adduser --system assigns no matching group.
+        runAsUser: 1001
+        runAsGroup: 65533
+        fsGroup: 65533
       containers:
         - name: ui
           image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"

@@ -20,6 +20,12 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        # Numeric, not the image's user NAME: kubelet refuses to start a
+        # container whose non-root claim it cannot verify, and `USER node`
+        # in the Dockerfile tells it nothing it can check.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: generator
           image: "{{ .Values.generator.image.repository }}:{{ .Values.generator.image.tag }}"
