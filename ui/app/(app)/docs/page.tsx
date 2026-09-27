@@ -44,10 +44,10 @@ export default async function DocsPage() {
             </dl>
           </div>
           <div>
-            <h2 className="mb-2 text-base">Was dieser Klickdummy nicht ist</h2>
+            <h2 className="mb-2 text-base">Demo-Umgebung</h2>
             <p className="text-muted-foreground">
-              Alles hier läuft im Browser mit Mockdaten. Es wird nichts gesendet, nichts gespeichert außer in diesem Browser, und die
-              Anmeldung prüft nichts. Der Klickdummy dient dazu, den Funktionsumfang der ersten UI-Version abzustimmen.
+              Die Werte sind simuliert. Registrierte Simulationen laufen weiter, bis sie gelöscht werden. Daten
+              können jederzeit zurückgesetzt werden.
             </p>
           </div>
         </div>

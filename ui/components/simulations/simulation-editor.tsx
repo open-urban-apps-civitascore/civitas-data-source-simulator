@@ -281,7 +281,7 @@ export function SimulationEditor({
             </Card>
 
             <Card>
-              <CardHeader title="Ziel" description="Wohin die Daten gehen – genau wie bei einem echten Gerät." />
+              <CardHeader title="Ziel" description="Wohin die Daten gehen." />
               <div className="grid gap-4 px-5 py-4">
                 <div className="flex gap-1 rounded-md bg-muted p-1 text-sm sm:w-fit">
                   {(["mqtt", "sql"] as const).map((kind) => (
@@ -404,7 +404,7 @@ export function SimulationEditor({
             </Card>
 
             <Card>
-              <CardHeader title="Takt" description="Wie oft ein Event gesendet wird." />
+              <CardHeader title="Takt" description="Wie oft Daten erzeugt werden." />
               <div className="grid gap-3 px-5 py-4">
                 <div className="flex flex-wrap gap-1">
                   {INTERVAL_PRESETS.map((s) => (

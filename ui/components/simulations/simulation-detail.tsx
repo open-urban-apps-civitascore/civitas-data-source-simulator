@@ -178,7 +178,7 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
         </div>
 
         <Card className="flex h-[36rem] flex-col overflow-hidden xl:sticky xl:top-0 xl:h-[calc(100svh-7rem)]">
-          <CardHeader title="Live-Stream" description="Events, so wie sie im Browser ankommen." />
+          <CardHeader title="Live-Stream" description="Die zuletzt erzeugten Datensätze." />
           <LiveStream sim={sim} events={events} onClear={clearEvents} pollMs={POLL_MS} />
         </Card>
       </div>
