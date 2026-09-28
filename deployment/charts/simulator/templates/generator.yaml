@@ -51,13 +51,17 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- if .Values.database.enabled }}
-            - name: DEMO_DB_DSN
-              value: "postgres://{{ .Values.database.auth.username }}:$(DEMO_DB_PASSWORD)@{{ include "simulator.databaseName" . }}.{{ include "simulator.namespace" . }}.svc.cluster.local:{{ .Values.database.service.port }}/{{ .Values.database.auth.database }}"
+            # BEFORE the DSN that reads it: the kubelet expands $(VAR) only
+            # against variables declared EARLIER in this list. Declared after,
+            # the reference survives verbatim into the connection string and
+            # the generator authenticates with the literal "$(DEMO_DB_PASSWORD)".
             - name: DEMO_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.auth.existingSecret.secretName }}
                   key: {{ .Values.database.auth.existingSecret.key }}
+            - name: DEMO_DB_DSN
+              value: "postgres://{{ .Values.database.auth.username }}:$(DEMO_DB_PASSWORD)@{{ include "simulator.databaseName" . }}.{{ include "simulator.namespace" . }}.svc.cluster.local:{{ .Values.database.service.port }}/{{ .Values.database.auth.database }}"
             {{- end }}
           readinessProbe:
             httpGet:
