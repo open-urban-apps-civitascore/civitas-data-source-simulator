@@ -2,6 +2,8 @@ import express from "express";
 import { z } from "zod";
 
 import { createAuthMiddleware, readAuthConfig } from "./auth.js";
+import { defaultBrokerUrl } from "./config.js";
+import { errorText } from "./connect-error.js";
 import { compileScenario } from "./generators.js";
 import { Registry, SimulationLimitError, renderSample } from "./registry.js";
 import { scenarioSchema, simulationInputSchema } from "./types.js";
@@ -20,6 +22,10 @@ const PORT = Number(process.env.PORT ?? 4300);
 
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", simulations: registry.list().length, authenticated: authConfig !== null });
+});
+
+app.get("/defaults", (_req, res) => {
+  res.json({ brokerUrl: defaultBrokerUrl() });
 });
 
 app.get("/simulations", (_req, res) => {
@@ -41,7 +47,9 @@ app.get("/simulations/:id", (req, res) => {
 app.put("/simulations/:id", async (req, res) => {
   const parsed = simulationInputSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(422).json({ error: "Invalid simulation.", details: parsed.error.flatten() });
+    // A refinement's message is written for people; zod's own messages are not.
+    const custom = parsed.error.issues.find((issue) => issue.code === z.ZodIssueCode.custom);
+    res.status(422).json({ error: custom?.message ?? "Invalid simulation.", details: parsed.error.flatten() });
     return;
   }
   try {
@@ -52,7 +60,7 @@ app.put("/simulations/:id", async (req, res) => {
       return;
     }
     // Usually an unreachable broker.
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(502).json({ error: errorText(error) });
   }
 });
 
@@ -71,7 +79,7 @@ app.post("/simulations/:id/switch_on", async (req, res) => {
     res.json(simulation);
   } catch (error) {
     // The simulation stays registered and paused, with the reason on it.
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(502).json({ error: errorText(error) });
   }
 });
 
@@ -84,7 +92,7 @@ app.post("/simulations/:id/switch_off", async (req, res) => {
     }
     res.json(simulation);
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(502).json({ error: errorText(error) });
   }
 });
 

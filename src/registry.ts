@@ -1,4 +1,5 @@
 import { resolveSqlDsn } from "./config.js";
+import { errorText } from "./connect-error.js";
 import { compileScenario } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
 import { resolveTable } from "./row-schema.js";
@@ -150,7 +151,7 @@ export class Registry {
       await this.start(simulation);
     } catch (error) {
       await this.teardown(simulation);
-      simulation.lastError = error instanceof Error ? error.message : String(error);
+      simulation.lastError = errorText(error);
       throw error;
     }
     simulation.input = { ...simulation.input, enabled: true };
@@ -278,7 +279,7 @@ export class Registry {
   }
 
   private recordFailure(simulation: Simulation, error: unknown): void {
-    simulation.lastError = error instanceof Error ? error.message : String(error);
+    simulation.lastError = errorText(error);
   }
 
   private async teardown(simulation: Simulation): Promise<void> {

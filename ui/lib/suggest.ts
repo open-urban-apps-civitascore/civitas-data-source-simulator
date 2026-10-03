@@ -1,5 +1,6 @@
 // One generator per property of a portal data structure. Every pick is a
 // suggestion the user reviews in the editor.
+import { slugify, topicFor } from "./slug";
 import type { DataStructureProperty, FieldSpec, GeneratorSpec, PortalDataStructure, SimulationDraft } from "./types";
 
 const MUSTERHAUSEN = { lat: 49.7913, lon: 9.9534 };
@@ -25,7 +26,7 @@ function suggestSpec(p: DataStructureProperty): GeneratorSpec {
   return { kind: "randomWalk", min, max, step: Math.max(span / 40, integer ? 1 : 0.1), start: min + span / 2, integer };
 }
 
-export function draftFromDataStructure(ds: PortalDataStructure): SimulationDraft {
+export function draftFromDataStructure(ds: PortalDataStructure, brokerUrl: string): SimulationDraft {
   // A property with no possible generator is left out: a field that cannot be
   // produced would be rejected by the service, or silently always null.
   const fields: FieldSpec[] = ds.properties
@@ -33,14 +34,14 @@ export function draftFromDataStructure(ds: PortalDataStructure): SimulationDraft
     .map((p) => ({ name: p.name, spec: suggestSpec(p) }));
   const primaryKey = ds.properties.find((p) => p.primaryKey)?.name;
   const isTable = Boolean(primaryKey);
-  const slug = ds.name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+  const name = `${ds.name} (Simulation)`;
   return {
-    name: `${ds.name} (Simulation)`,
+    name,
     description: `Aus der Portal-Datenstruktur ${ds.name} ${ds.version} abgeleitet.`,
     enabled: false,
     transport: isTable
-      ? { kind: "sql", table: `${ds.domain.toLowerCase()}.${slug.replace(/-/g, "_")}` }
-      : { kind: "mqtt", url: "mqtt://civitas-mosquitto:1883", topic: `civitas/${slug}` },
+      ? { kind: "sql", table: `${ds.domain.toLowerCase()}.${slugify(ds.name).replace(/-/g, "_")}` }
+      : { kind: "mqtt", url: brokerUrl, topic: topicFor(name) },
     scenario: {
       intervalSeconds: isTable ? 60 : 10,
       fields,

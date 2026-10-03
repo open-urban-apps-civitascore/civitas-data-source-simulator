@@ -50,6 +50,10 @@ spec:
             - name: AUTH_REQUIRED_ROLE
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.broker.enabled }}
+            - name: DEMO_BROKER_URL
+              value: {{ include "simulator.brokerAddress" . | quote }}
+            {{- end }}
             {{- if .Values.database.enabled }}
             # BEFORE the DSN that reads it: the kubelet expands $(VAR) only
             # against variables declared EARLIER in this list. Declared after,

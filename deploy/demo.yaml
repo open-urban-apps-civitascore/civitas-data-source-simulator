@@ -136,6 +136,7 @@ spec:
             - name: DEMO_DB_DSN
               valueFrom:
                 secretKeyRef: { name: demo-source-db, key: DEMO_DB_DSN }
+            - { name: DEMO_BROKER_URL, value: "mqtt://mosquitto:1883" }
             # Every request must carry a Keycloak token from this realm. The
             # service refuses to start if neither this nor SIMULATOR_AUTH_DISABLED
             # is set, so forgetting it cannot leave the API open by accident.

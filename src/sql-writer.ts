@@ -1,5 +1,6 @@
 import pg from "pg";
 
+import { CONNECT_TIMEOUT_MS, describeDatabaseError } from "./connect-error.js";
 import type { ResolvedTable } from "./row-schema.js";
 import { SIMULATED_COLUMN, type ColumnType } from "./types.js";
 
@@ -71,9 +72,16 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
   const qualified = `${quoteIdent(schema)}.${quoteIdent(name)}`;
   const primaryKey = quoteIdent(spec.primaryKey);
 
-  const pool = new pg.Pool({ connectionString: dsn, max: 2, connectionTimeoutMillis: 10_000 });
-  // Fail at registration, not at the first tick.
-  await pool.query("SELECT 1");
+  const pool = new pg.Pool({ connectionString: dsn, max: 2, connectionTimeoutMillis: CONNECT_TIMEOUT_MS });
+  try {
+    // Fail at registration, not at the first tick.
+    await pool.query("SELECT 1");
+  } catch (error) {
+    const target = URL.canParse(dsn) ? new URL(dsn) : null;
+    if (!target) throw error;
+    console.error(`[demo-generator] database connect to ${target.host} failed:`, error);
+    throw new Error(describeDatabaseError(target, error), { cause: error });
+  }
 
   const columns = Object.keys(spec.columns);
 

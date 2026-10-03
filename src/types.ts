@@ -84,9 +84,20 @@ export const scenarioSchema = z.object({
 
 export type Scenario = z.infer<typeof scenarioSchema>;
 
+// mqtt.js silently treats any other scheme as plain TCP.
+const BROKER_SCHEMES = new Set(["mqtt:", "mqtts:", "tcp:", "ssl:", "tls:", "ws:", "wss:"]);
+
+export const INVALID_BROKER_URL =
+  "Die Broker-Adresse ist ungültig. Sie braucht ein Schema (mqtt, mqtts, tcp, ssl, tls, ws oder wss), einen Namen und, falls angegeben, einen gültigen Port, zum Beispiel mqtt://broker:1883.";
+
+export function parseBrokerUrl(url: string): URL | null {
+  const parsed = URL.canParse(url) ? new URL(url) : null;
+  return parsed && BROKER_SCHEMES.has(parsed.protocol) && parsed.hostname ? parsed : null;
+}
+
 export const mqttTransportSchema = z.object({
   kind: z.literal("mqtt").default("mqtt"),
-  url: z.string().min(1),
+  url: z.string().trim().refine((url) => parseBrokerUrl(url) !== null, INVALID_BROKER_URL),
   topic: z.string().min(1),
 });
 

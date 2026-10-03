@@ -87,6 +87,15 @@ function describeUnparsable(status: number, text: string): string {
     : `Der Generator antwortete mit ${status}.`;
 }
 
+/** Empty when the generator has no broker configured or cannot be asked. */
+export async function getDefaultBrokerUrl(): Promise<string> {
+  try {
+    return (await call<{ brokerUrl: string | null }>("/defaults")).brokerUrl ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function listSimulations(): Promise<SimulationStatus[]> {
   const body = await call<{ simulations: SimulationStatus[] }>("/simulations");
   return body.simulations;

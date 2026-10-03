@@ -12,6 +12,12 @@ try {
 }
 
 export const DEMO_DB_DSN_VAR = "DEMO_DB_DSN";
+export const DEMO_BROKER_URL_VAR = "DEMO_BROKER_URL";
+
+/** The broker as this service reaches it, which is not how NiFi does. No baked-in default. */
+export function defaultBrokerUrl(): string | null {
+  return process.env[DEMO_BROKER_URL_VAR]?.trim() || null;
+}
 
 /** No baked-in default: a wrong-but-plausible address is the failure to avoid. */
 export function resolveSqlDsn(requestDsn: string | undefined): string {

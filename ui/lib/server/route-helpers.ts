@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { GeneratorError } from "@/lib/server/generator";
 import { isAuthorised } from "@/lib/server/session";
+import { slugify } from "@/lib/slug";
 
 /** 401 unless signed in. */
 export async function requireSession(): Promise<NextResponse | null> {
@@ -25,14 +26,5 @@ export function toErrorResponse(error: unknown): NextResponse {
 
 /** `Verkehrszählung Hauptstraße` becomes `verkehrszaehlung-hauptstrasse-a1b2`. */
 export function mintId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/ä/g, "ae")
-    .replace(/ö/g, "oe")
-    .replace(/ü/g, "ue")
-    .replace(/ß/g, "ss")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 40);
-  return `${slug || "simulation"}-${Math.random().toString(16).slice(2, 6)}`;
+  return `${slugify(name, 40) || "simulation"}-${Math.random().toString(16).slice(2, 6)}`;
 }

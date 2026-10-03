@@ -15,6 +15,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { fromJson, toInput, toJson, toScenario } from "@/lib/api-json";
 import { createSimulation, saveSimulation } from "@/lib/client";
+import { topicFor } from "@/lib/slug";
 import type { FieldSpec, SimulationDraft } from "@/lib/types";
 
 const MQTT_FIELDS: FieldSpec[] = [
@@ -32,13 +33,15 @@ const SQL_FIELDS: FieldSpec[] = [
   { name: "messwert", spec: { kind: "randomWalk", min: 0, max: 100, step: 5, integer: false } },
 ];
 
-const EMPTY: SimulationDraft = {
-  name: "",
-  description: "",
-  enabled: false,
-  transport: { kind: "mqtt", url: "mqtt://civitas-mosquitto:1883", topic: "civitas/" },
-  scenario: { intervalSeconds: 10, fields: MQTT_FIELDS },
-};
+function emptyDraft(brokerUrl: string): SimulationDraft {
+  return {
+    name: "",
+    description: "",
+    enabled: false,
+    transport: { kind: "mqtt", url: brokerUrl, topic: "" },
+    scenario: { intervalSeconds: 10, fields: MQTT_FIELDS },
+  };
+}
 
 const sameFields = (a: FieldSpec[], b: FieldSpec[]) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -48,8 +51,9 @@ function validate(draft: SimulationDraft): string[] {
   const errors: string[] = [];
   if (!draft.name.trim()) errors.push("Ein Name fehlt.");
   if (draft.transport.kind === "mqtt") {
+    // The generator checks the address itself and says what is wrong with it.
     if (!draft.transport.url.trim()) errors.push("Die Broker-Adresse fehlt.");
-    if (!draft.transport.topic.trim() || draft.transport.topic.trim() === "civitas/") errors.push("Das Topic fehlt.");
+    if (!draft.transport.topic.trim()) errors.push("Das Topic fehlt.");
   } else {
     if (!draft.transport.table.trim()) errors.push("Der Tabellenname fehlt.");
     if (!draft.scenario.primaryKey) errors.push("Eine SQL-Simulation braucht einen Primärschlüssel.");
@@ -73,26 +77,37 @@ export function SimulationEditor({
   initial,
   initialMode = "fields",
   fromDataStructure,
+  defaultBrokerUrl = "",
 }: {
   id?: string;
   initial?: SimulationDraft;
   initialMode?: "fields" | "json";
   /** Portal data structure the fields came from, if any. */
   fromDataStructure?: string;
+  defaultBrokerUrl?: string;
 }) {
   const router = useRouter();
-  const [draft, setDraft] = useState<SimulationDraft>(initial ?? EMPTY);
+  const isEdit = Boolean(id);
+  const [draft, setDraft] = useState<SimulationDraft>(() => initial ?? emptyDraft(defaultBrokerUrl));
+  // The topic follows the name until someone types one. A saved topic may have subscribers.
+  const [topicTouched, setTopicTouched] = useState(isEdit);
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [mode, setMode] = useState<"fields" | "json">(initialMode);
-  const [jsonText, setJsonText] = useState(() => (initialMode === "json" ? toJson(initial ?? EMPTY) : ""));
+  const [jsonText, setJsonText] = useState(() => (initialMode === "json" ? toJson(draft) : ""));
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonApplied, setJsonApplied] = useState(false);
   const errors = validate(draft);
-  const isEdit = Boolean(id);
 
   const setFields = (fields: FieldSpec[]) => setDraft((d) => ({ ...d, scenario: { ...d.scenario, fields } }));
+
+  const setName = (name: string) =>
+    setDraft((d) =>
+      !topicTouched && d.transport.kind === "mqtt"
+        ? { ...d, name, transport: { ...d.transport, topic: topicFor(name) } }
+        : { ...d, name },
+    );
 
   const switchMode = (next: "fields" | "json") => {
     if (next === "json") {
@@ -106,6 +121,7 @@ export function SimulationEditor({
   const applyJson = () => {
     try {
       setDraft(fromJson(jsonText));
+      setTopicTouched(true);
       setJsonError(null);
       setJsonApplied(true);
     } catch (error) {
@@ -156,9 +172,11 @@ export function SimulationEditor({
 
       if (kind === "mqtt") {
         const fields = sameFields(d.scenario.fields, SQL_FIELDS) ? MQTT_FIELDS : d.scenario.fields;
+        // A saved simulation gets its own address back, not a new one.
+        const saved = isEdit && initial?.transport.kind === "mqtt" ? initial.transport : null;
         return {
           ...d,
-          transport: { kind: "mqtt", url: "mqtt://civitas-mosquitto:1883", topic: "civitas/" },
+          transport: saved ?? { kind: "mqtt", url: defaultBrokerUrl, topic: topicFor(d.name) },
           scenario: { ...d.scenario, fields, primaryKey: undefined },
         };
       }
@@ -260,7 +278,7 @@ export function SimulationEditor({
                   <Field label="Name">
                     <Input
                       value={draft.name}
-                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                      onChange={(e) => setName(e.target.value)}
                       placeholder="z. B. Verkehrszählung Hauptstraße"
                     />
                   </Field>
@@ -299,8 +317,9 @@ export function SimulationEditor({
                 </div>
                 {draft.transport.kind === "mqtt" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Broker" hint="Im Plattform-Netz: mqtt://civitas-mosquitto:1883">
+                    <Field label="Broker" hint="So, wie der Generator den Broker erreicht – nicht Ihr Browser.">
                       <Input
+                        placeholder="mqtt://broker:1883"
                         value={draft.transport.url}
                         onChange={(e) =>
                           setDraft({
@@ -315,10 +334,19 @@ export function SimulationEditor({
                         className="font-mono"
                       />
                     </Field>
-                    <Field label="Topic" hint="Das Topic, das die Pipeline abonniert.">
+                    <Field
+                      label="Topic"
+                      hint={
+                        topicTouched
+                          ? "Die Pipeline abonniert genau dieses Topic."
+                          : "Die Pipeline abonniert genau dieses Topic. Folgt dem Namen, bis Sie es selbst ändern."
+                      }
+                    >
                       <Input
+                        placeholder="civitas/name-der-simulation"
                         value={draft.transport.topic}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setTopicTouched(true);
                           setDraft({
                             ...draft,
                             transport: {
@@ -326,8 +354,8 @@ export function SimulationEditor({
                               url: draft.transport.kind === "mqtt" ? draft.transport.url : "",
                               topic: e.target.value,
                             },
-                          })
-                        }
+                          });
+                        }}
                         className="font-mono"
                       />
                     </Field>

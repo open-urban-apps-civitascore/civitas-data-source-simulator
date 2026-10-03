@@ -93,6 +93,11 @@ their broker; because the payload shape is identical, nothing else changes.
 
 The dev stack must be up first, since the broker joins its `civitas-network`.
 
+`DEMO_BROKER_URL` is the broker a new MQTT simulation starts with, **as the
+generator reaches it**: `mqtt://localhost:1884` on your machine (see
+`.env.example`); in a cluster the chart sets it. Like `DEMO_DB_DSN` it has no
+default, and unset, the form starts empty.
+
 > Replaces `appstore-addon/demo-broker/docker-compose.yml`. Both use the container
 > name `civitas-mosquitto`, so stop the old one before starting this:
 > `docker compose -f ../appstore-addon/demo-broker/docker-compose.yml down`
@@ -118,6 +123,7 @@ scenario field by field. It talks to the API below and to nothing else. See
 | --- | --- | --- |
 | `PUT` | `/simulations/{id}` | Create or replace. Caller owns the id — the marketplace passes its dataset id |
 | `GET` | `/simulations` | List, for reconciliation after a restart |
+| `GET` | `/defaults` | `{ brokerUrl }` — what a new simulation is offered; `null` when unset |
 | `GET` | `/simulations/{id}` | Status, including `publishedCount` and `lastPayload`, plus the `input` it was registered with — what the UI edits |
 | `DELETE` | `/simulations/{id}` | Stop and forget |
 | `POST` | `/simulations/{id}/switch_on` · `/switch_off` | Pause and resume without losing the scenario |

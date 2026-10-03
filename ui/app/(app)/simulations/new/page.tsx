@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AppHeader } from "@/components/layout/app-header";
 import { SimulationEditor } from "@/components/simulations/simulation-editor";
 import { findDataStructure } from "@/lib/server/datastructures";
+import { getDefaultBrokerUrl } from "@/lib/server/generator";
 import { draftFromDataStructure } from "@/lib/suggest";
 import { requireSession } from "@/lib/server/session";
 
@@ -18,7 +19,7 @@ export default async function NewSimulationPage({
 }) {
   await requireSession();
   const { from, mode } = await searchParams;
-  const ds = await findDataStructure(from);
+  const [ds, brokerUrl] = await Promise.all([findDataStructure(from), getDefaultBrokerUrl()]);
 
   return (
     <>
@@ -35,7 +36,8 @@ export default async function NewSimulationPage({
       />
       <SimulationEditor
         key={ds?.urn ?? "blank"}
-        initial={ds ? draftFromDataStructure(ds) : undefined}
+        initial={ds ? draftFromDataStructure(ds, brokerUrl) : undefined}
+        defaultBrokerUrl={brokerUrl}
         fromDataStructure={ds?.name}
         initialMode={mode === "json" ? "json" : "fields"}
       />
