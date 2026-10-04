@@ -157,6 +157,33 @@ curl -X PUT http://localhost:4300/simulations/my-dataset-id \
 
 Field keys are dotted paths, so nested payloads need no extra syntax.
 
+### Name and origin
+
+The id is a key, not a label: the marketplace builds it as
+`<installationId>--<stream>` so an uninstall can sweep by prefix, and it never
+changes. What a person reads is `name` and `description`. What ties a
+simulation to the platform is `origin`, a structured snapshot of the portal
+artifacts it feeds, each with the name the portal shows and the ids that find
+it:
+
+```json
+"name": "Verkehrszählung Musterhausen · Zählstelle Promenade",
+"origin": {
+  "installationId": "8f3c…",
+  "useCase": { "id": "urn:openurbanapps:usecase:…", "name": "Verkehrszählung", "version": "1.5.1" },
+  "dataSet": { "name": "Verkehrszählung Musterhausen", "id": "c46fa1f9-…" },
+  "dataSource": { "name": "Zählstellen-Feed", "urn": "urn:core:…:datasource:…", "id": "…" },
+  "dataStructure": { "name": "Zählung", "urn": "urn:core:…:datastructure:…" },
+  "stream": "zaehlstelle-promenade"
+}
+```
+
+The UI matches a simulation to a portal data structure by `origin.dataStructure.urn`.
+Every registration replaces the origin, so a renamed artifact is picked up the
+next time the marketplace registers. A simulation made by hand carries one only
+when it was built from a portal data structure, and then just that structure.
+Editing a simulation in the UI keeps its origin.
+
 ### Generators
 
 | Kind | Produces |
@@ -168,6 +195,24 @@ Field keys are dotted paths, so nested payloads need no extra syntax.
 | `dailyProfile` | Follows the clock — low at night, peaking at `peakHours`. This is what makes data look real |
 | `sequence` | `${prefix}${n}` — the only kind that can mint a unique key for a SQL table |
 | `jitter` | Stateless scatter around `center`. The right kind for coordinates, which `randomWalk` would drag across the map |
+
+### Cadence
+
+`scenario.cadence` says how records arrive.
+
+| Cadence | Behaviour |
+| --- | --- |
+| `interval` (default) | One record every `intervalSeconds`. SQL: `seedRows` at start, then `insertsPerTick` per tick, up to `maxRows` |
+| `fillToLimit` | SQL only. Tops the table up to `maxRows` at start and writes nothing after |
+
+`fillToLimit` is the shape of master data — a tree cadastre exists whole, it does
+not grow by a row a minute. It counts before it writes, so a restart or a second
+registration finds the table full and adds nothing, where `seedRows` would be
+written again on every start.
+
+```json
+"scenario": { "cadence": "fillToLimit", "maxRows": 25, "table": { … }, "fields": { … } }
+```
 
 ## Design decisions
 

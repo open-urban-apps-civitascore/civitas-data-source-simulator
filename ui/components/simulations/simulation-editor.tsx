@@ -11,12 +11,15 @@ import { SamplePreview } from "@/components/simulations/sample-preview";
 import { ViewToggle } from "@/components/simulations/simulation-detail";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { CheckedField } from "@/components/ui/checked-field";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/parsed-input";
 import { Switch } from "@/components/ui/switch";
 import { fromJson, toInput, toJson, toScenario } from "@/lib/api-json";
 import { createSimulation, saveSimulation } from "@/lib/client";
 import { topicFor } from "@/lib/slug";
-import type { FieldSpec, SimulationDraft } from "@/lib/types";
+import { specMessages } from "@/lib/spec-checks";
+import type { Cadence, FieldSpec, SimulationDraft } from "@/lib/types";
 
 const MQTT_FIELDS: FieldSpec[] = [
   { name: "sensorId", spec: { kind: "constant", value: "sensor-001" } },
@@ -47,8 +50,30 @@ const sameFields = (a: FieldSpec[], b: FieldSpec[]) => JSON.stringify(a) === JSO
 
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60, 300, 900, 3600];
 
+/** Tables only: master data such as a cadastre exists whole instead of growing. */
+const CADENCES: { cadence: Cadence; label: string }[] = [
+  { cadence: "interval", label: "Im Takt" },
+  { cadence: "fillToLimit", label: "Alles auf einmal" },
+];
+
+/** Empty means the service's default; anything typed must be a whole number in range. */
+function rowsError(value: number | undefined, from: number, to: number): string | undefined {
+  if (value === undefined || (Number.isInteger(value) && value >= from && value <= to)) return undefined;
+  return `Eine ganze Zahl von ${from} bis ${to.toLocaleString("de-DE")}.`;
+}
+
+function maxRowsError(value: number | undefined): string | undefined {
+  if (value === undefined || Number.isNaN(value)) return "Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle.";
+  return rowsError(value, 1, 100_000);
+}
+
+function intervalError(value: number): string | undefined {
+  return Number.isFinite(value) && value >= 1 && value <= 3600 ? undefined : "1 bis 3600.";
+}
+
 function validate(draft: SimulationDraft): string[] {
   const errors: string[] = [];
+  const fill = draft.transport.kind === "sql" && draft.scenario.cadence === "fillToLimit";
   if (!draft.name.trim()) errors.push("Ein Name fehlt.");
   if (draft.transport.kind === "mqtt") {
     // The generator checks the address itself and says what is wrong with it.
@@ -57,7 +82,13 @@ function validate(draft: SimulationDraft): string[] {
   } else {
     if (!draft.transport.table.trim()) errors.push("Der Tabellenname fehlt.");
     if (!draft.scenario.primaryKey) errors.push("Eine SQL-Simulation braucht einen Primärschlüssel.");
-    if (!draft.scenario.maxRows) errors.push("Eine SQL-Simulation braucht eine Obergrenze (maxRows).");
+    const maxRows = maxRowsError(draft.scenario.maxRows);
+    if (maxRows) errors.push(`Obergrenze (Zeilen): ${maxRows}`);
+    // A fill writes up to the limit at once; these two are not used then.
+    const seedRows = fill ? undefined : rowsError(draft.scenario.seedRows, 0, 10_000);
+    if (seedRows) errors.push(`Zeilen beim Start: ${seedRows}`);
+    const insertsPerTick = fill ? undefined : rowsError(draft.scenario.insertsPerTick, 0, 100);
+    if (insertsPerTick) errors.push(`Zeilen pro Tick: ${insertsPerTick}`);
     for (const f of draft.scenario.fields) {
       if (f.name.includes(".")) errors.push(`Spaltennamen dürfen keine Punkte enthalten: ${f.name}`);
     }
@@ -66,7 +97,8 @@ function validate(draft: SimulationDraft): string[] {
   const names = draft.scenario.fields.map((f) => f.name.trim());
   if (names.some((n) => !n)) errors.push("Jedes Feld braucht einen Namen.");
   if (new Set(names).size !== names.length) errors.push("Feldnamen müssen eindeutig sein.");
-  if (draft.scenario.intervalSeconds < 1 || draft.scenario.intervalSeconds > 3600) {
+  for (const f of draft.scenario.fields) errors.push(...specMessages(f.name, f.spec));
+  if (!fill && intervalError(draft.scenario.intervalSeconds)) {
     errors.push("Der Takt muss zwischen 1 s und 1 h liegen.");
   }
   return errors;
@@ -99,6 +131,7 @@ export function SimulationEditor({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonApplied, setJsonApplied] = useState(false);
   const errors = validate(draft);
+  const fill = draft.transport.kind === "sql" && draft.scenario.cadence === "fillToLimit";
 
   const setFields = (fields: FieldSpec[]) => setDraft((d) => ({ ...d, scenario: { ...d.scenario, fields } }));
 
@@ -177,7 +210,8 @@ export function SimulationEditor({
         return {
           ...d,
           transport: saved ?? { kind: "mqtt", url: defaultBrokerUrl, topic: topicFor(d.name) },
-          scenario: { ...d.scenario, fields, primaryKey: undefined },
+          // A broker keeps no rows, so there is nothing to fill.
+          scenario: { ...d.scenario, fields, primaryKey: undefined, cadence: undefined },
         };
       }
 
@@ -387,45 +421,60 @@ export function SimulationEditor({
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Zeilen beim Start" hint="Damit die Karte nie leer ist.">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={10000}
-                        value={draft.scenario.seedRows ?? 0}
-                        onChange={(e) =>
-                          setDraft({ ...draft, scenario: { ...draft.scenario, seedRows: Number(e.target.value) } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Zeilen pro Tick">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={draft.scenario.insertsPerTick ?? 1}
-                        onChange={(e) =>
-                          setDraft({ ...draft, scenario: { ...draft.scenario, insertsPerTick: Number(e.target.value) } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Obergrenze (Zeilen)" hint="Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle.">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={100000}
-                        value={draft.scenario.maxRows ?? ""}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            scenario: {
-                              ...draft.scenario,
-                              maxRows: e.target.value === "" ? undefined : Number(e.target.value),
-                            },
-                          })
-                        }
-                      />
-                    </Field>
+                    {!fill && (
+                      <>
+                        <CheckedField
+                          label="Zeilen beim Start"
+                          hint="Damit die Karte nie leer ist."
+                          error={rowsError(draft.scenario.seedRows, 0, 10_000)}
+                          showError={submitted}
+                        >
+                          {(invalid) => (
+                            <NumberInput
+                              value={draft.scenario.seedRows}
+                              integer
+                              placeholder="0"
+                              invalid={invalid}
+                              onValueChange={(seedRows) =>
+                                setDraft((d) => ({ ...d, scenario: { ...d.scenario, seedRows } }))
+                              }
+                            />
+                          )}
+                        </CheckedField>
+                        <CheckedField
+                          label="Zeilen pro Tick"
+                          error={rowsError(draft.scenario.insertsPerTick, 0, 100)}
+                          showError={submitted}
+                        >
+                          {(invalid) => (
+                            <NumberInput
+                              value={draft.scenario.insertsPerTick}
+                              integer
+                              placeholder="1"
+                              invalid={invalid}
+                              onValueChange={(insertsPerTick) =>
+                                setDraft((d) => ({ ...d, scenario: { ...d.scenario, insertsPerTick } }))
+                              }
+                            />
+                          )}
+                        </CheckedField>
+                      </>
+                    )}
+                    <CheckedField
+                      label="Obergrenze (Zeilen)"
+                      hint="Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle."
+                      error={maxRowsError(draft.scenario.maxRows)}
+                      showError={submitted}
+                    >
+                      {(invalid) => (
+                        <NumberInput
+                          value={draft.scenario.maxRows}
+                          integer
+                          invalid={invalid}
+                          onValueChange={(maxRows) => setDraft((d) => ({ ...d, scenario: { ...d.scenario, maxRows } }))}
+                        />
+                      )}
+                    </CheckedField>
                   </div>
                 )}
               </div>
@@ -434,33 +483,69 @@ export function SimulationEditor({
             <Card>
               <CardHeader title="Takt" description="Wie oft Daten erzeugt werden." />
               <div className="grid gap-3 px-5 py-4">
-                <div className="flex flex-wrap gap-1">
-                  {INTERVAL_PRESETS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setDraft({ ...draft, scenario: { ...draft.scenario, intervalSeconds: s } })}
-                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                        draft.scenario.intervalSeconds === s
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "hover:bg-muted"
-                      }`}
+                {draft.transport.kind === "sql" && (
+                  <div className="flex flex-wrap gap-1">
+                    {CADENCES.map(({ cadence, label }) => (
+                      <button
+                        key={cadence}
+                        type="button"
+                        onClick={() => setDraft({ ...draft, scenario: { ...draft.scenario, cadence } })}
+                        className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          (draft.scenario.cadence ?? "interval") === cadence
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "hover:bg-muted"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {fill ? (
+                  <p className="text-xs text-muted-foreground">
+                    Beim Start wird die Tabelle bis zur Obergrenze befüllt, danach kommen keine Zeilen dazu. Ein
+                    Neustart ergänzt nur, was fehlt. Richtig für Stammdaten wie ein Baumkataster.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-1">
+                      {INTERVAL_PRESETS.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setDraft({ ...draft, scenario: { ...draft.scenario, intervalSeconds: s } })}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                            draft.scenario.intervalSeconds === s
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "hover:bg-muted"
+                          }`}
+                        >
+                          {s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : "1 h"}
+                        </button>
+                      ))}
+                    </div>
+                    <CheckedField
+                      label="Intervall in Sekunden"
+                      hint="1 bis 3600."
+                      className="sm:w-64"
+                      error={intervalError(draft.scenario.intervalSeconds)}
+                      showError={submitted}
                     >
-                      {s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : "1 h"}
-                    </button>
-                  ))}
-                </div>
-                <Field label="Intervall in Sekunden" hint="1 bis 3600." className="sm:w-64">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={3600}
-                    value={draft.scenario.intervalSeconds}
-                    onChange={(e) =>
-                      setDraft({ ...draft, scenario: { ...draft.scenario, intervalSeconds: Number(e.target.value) } })
-                    }
-                  />
-                </Field>
+                      {(invalid) => (
+                        <NumberInput
+                          value={draft.scenario.intervalSeconds}
+                          invalid={invalid}
+                          onValueChange={(seconds) =>
+                            setDraft((d) => ({
+                              ...d,
+                              scenario: { ...d.scenario, intervalSeconds: seconds ?? Number.NaN },
+                            }))
+                          }
+                        />
+                      )}
+                    </CheckedField>
+                  </>
+                )}
               </div>
             </Card>
 
@@ -490,6 +575,7 @@ export function SimulationEditor({
                     key={index}
                     field={field}
                     isPrimaryKey={draft.scenario.primaryKey === field.name}
+                    showErrors={submitted}
                     onChange={(next) => setFields(draft.scenario.fields.map((f, i) => (i === index ? next : f)))}
                     onRemove={() => setFields(draft.scenario.fields.filter((_, i) => i !== index))}
                   />

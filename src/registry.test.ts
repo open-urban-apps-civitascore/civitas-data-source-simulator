@@ -63,3 +63,32 @@ describe("Registry.setEnabled", () => {
     await registry.shutdown();
   });
 });
+
+describe("Registry status", () => {
+  it("reports the origin it was registered with, so the UI can match it to the portal", async () => {
+    const registry = new Registry();
+    const origin = {
+      installationId: "inst-42",
+      dataSet: { name: "Verkehrszählung Musterhausen", id: "c46fa1f9" },
+      dataSource: { name: "Zählstellen-Feed", urn: "urn:core:standard:musterhausen:datasource:mobility:feed:abc" },
+      stream: "zaehlstelle-promenade",
+    };
+    await registry.put("inst-42--zaehlstelle-promenade", {
+      ...input("tcp://broker:1883"),
+      name: "Verkehrszählung Musterhausen · Zählstelle Promenade",
+      origin,
+    });
+
+    const [status] = registry.list();
+    expect(status.name).toBe("Verkehrszählung Musterhausen · Zählstelle Promenade");
+    expect(status.origin).toEqual(origin);
+    await registry.shutdown();
+  });
+
+  it("reports no origin for a simulation made by hand", async () => {
+    const registry = new Registry();
+    await registry.put("handmade", input("tcp://broker:1883"));
+    expect(registry.get("handmade")?.origin).toBeNull();
+    await registry.shutdown();
+  });
+});

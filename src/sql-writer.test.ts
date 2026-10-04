@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSqlWriter } from "./sql-writer.js";
+import { createSqlWriter, rowsPerStatement } from "./sql-writer.js";
+
+describe("rowsPerStatement", () => {
+  it("keeps every INSERT under Postgres' bind-parameter cap", () => {
+    for (const columns of [1, 9, 10, 64, 200]) {
+      expect(rowsPerStatement(columns) * columns).toBeLessThanOrEqual(65_535);
+      expect((rowsPerStatement(columns) + 1) * columns).toBeGreaterThan(65_535);
+    }
+  });
+
+  it("still writes one row at a time for a pathological width", () => {
+    expect(rowsPerStatement(100_000)).toBe(1);
+    expect(rowsPerStatement(0)).toBe(65_535);
+  });
+});
 
 describe("createSqlWriter", () => {
   afterEach(() => {

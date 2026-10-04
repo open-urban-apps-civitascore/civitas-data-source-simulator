@@ -1,3 +1,5 @@
+import type { Cadence } from "./types";
+
 const dateTime = new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" });
 const time = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const number = new Intl.NumberFormat("de-DE");
@@ -30,4 +32,9 @@ export function formatInterval(seconds: number): string {
   if (seconds < 60) return `alle ${seconds} s`;
   if (seconds % 60 === 0) return `alle ${seconds / 60} min`;
   return `alle ${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+}
+
+/** A filled table has no interval worth showing. */
+export function formatCadence(sim: { cadence?: Cadence; intervalSeconds: number }): string {
+  return sim.cadence === "fillToLimit" ? "einmalig bis zur Obergrenze" : formatInterval(sim.intervalSeconds);
 }

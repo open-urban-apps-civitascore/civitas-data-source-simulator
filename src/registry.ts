@@ -4,16 +4,18 @@ import { compileScenario } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
 import { resolveTable } from "./row-schema.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
-import type { SimulationInput } from "./types.js";
+import type { Cadence, Origin, SimulationInput } from "./types.js";
 
 // In memory only: the marketplace holds the install records, and a second copy
 // would eventually disagree. SQL sequence counters are read back from the table.
 
 export interface SimulationStatus {
   id: string;
-  /** Null when the caller registered without one (the marketplace does). */
+  /** Null when the caller registered without one. */
   name: string | null;
   description: string | null;
+  /** What the simulation belongs to on the platform; null when registered by hand. */
+  origin: Origin | null;
   enabled: boolean;
   transport: "mqtt" | "sql";
   /** MQTT only. */
@@ -21,6 +23,8 @@ export interface SimulationStatus {
   /** Broker URL, or the table for SQL. */
   target: string;
   intervalSeconds: number;
+  /** `fillToLimit` writes once at start; `intervalSeconds` then means nothing. */
+  cadence: Cadence;
   createdAt: string;
   /** Messages published (MQTT) or rows written (SQL). */
   publishedCount: number;
@@ -54,6 +58,8 @@ interface StartedTransport {
   /** The timer body, and whether it should also run once immediately. */
   tick: () => Promise<void>;
   fireImmediately: boolean;
+  /** False when the start already wrote everything there is to write. */
+  repeats: boolean;
 }
 
 /** A demo tool must not be able to flood a municipal broker or database. */
@@ -171,12 +177,13 @@ export class Registry {
   }
 
   private async start(simulation: Simulation): Promise<void> {
-    const { tick, fireImmediately } =
+    const { tick, fireImmediately, repeats } =
       simulation.input.transport.kind === "sql"
         ? await this.startSql(simulation)
         : await this.startMqtt(simulation);
 
     simulation.lastError = null;
+    if (!repeats) return;
     // SQL has already seeded; an immediate tick would write `seedRows + 1`.
     if (fireImmediately) void tick();
     simulation.timer = setInterval(tick, simulation.input.scenario.intervalSeconds * 1000);
@@ -203,7 +210,7 @@ export class Registry {
         this.recordFailure(simulation, error);
       }
     };
-    return { tick, fireImmediately: true };
+    return { tick, fireImmediately: true, repeats: true };
   }
 
   private async startSql(simulation: Simulation): Promise<StartedTransport> {
@@ -242,13 +249,17 @@ export class Registry {
       if (rows.length === 0) return;
       const written = await writer.write(rows);
       simulation.rowCount = await writer.countRows();
+      simulation.atCap = simulation.rowCount >= maxRows;
       this.recordSuccess(simulation, written, rows.at(-1) ?? null);
     };
 
-    // Seed now, so the map is never empty while the first tick is pending.
-    if (scenario.seedRows > 0) {
+    // Seed now, so the map is never empty while the first tick is pending. A fill
+    // asks for the whole limit; `writeRows` only adds what the table lacks.
+    const fill = scenario.cadence === "fillToLimit";
+    const initialRows = fill ? maxRows : scenario.seedRows;
+    if (initialRows > 0) {
       try {
-        await writeRows(scenario.seedRows);
+        await writeRows(initialRows);
       } catch (error) {
         // Fatal: seeding fails when the table is wrong, not on a blip.
         await writer.close().catch(() => undefined);
@@ -264,7 +275,7 @@ export class Registry {
         this.recordFailure(simulation, error);
       }
     };
-    return { tick, fireImmediately: false };
+    return { tick, fireImmediately: false, repeats: !fill };
   }
 
   private recordSuccess(
@@ -310,11 +321,13 @@ function toStatus(simulation: Simulation): SimulationStatus {
     id: simulation.id,
     name: simulation.input.name ?? null,
     description: simulation.input.description ?? null,
+    origin: simulation.input.origin ?? null,
     enabled: simulation.input.enabled,
     transport: transport.kind,
     topic: transport.kind === "mqtt" ? transport.topic : null,
     target: transport.kind === "mqtt" ? transport.url : transport.table,
     intervalSeconds: simulation.input.scenario.intervalSeconds,
+    cadence: simulation.input.scenario.cadence,
     createdAt: simulation.createdAt.toISOString(),
     publishedCount: simulation.publishedCount,
     rowCount: simulation.rowCount,

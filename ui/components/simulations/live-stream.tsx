@@ -86,7 +86,9 @@ export function LiveStream({
               : sim.lastError
                 ? "Keine Events – die Simulation meldet einen Fehler."
                 : sim.atCap
-                  ? "Keine Events – die Tabelle hat ihre Obergrenze erreicht."
+                  ? sim.cadence === "fillToLimit"
+                    ? "Keine Events – die Tabelle ist bis zur Obergrenze befüllt, mehr ist nicht vorgesehen."
+                    : "Keine Events – die Tabelle hat ihre Obergrenze erreicht."
                   : "Keine Events – die Simulation ist pausiert."}
           </p>
         ) : null}

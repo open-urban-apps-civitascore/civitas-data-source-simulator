@@ -66,9 +66,21 @@ export const tableSpecSchema = z.object({
 
 export type TableSpec = z.infer<typeof tableSpecSchema>;
 
+/**
+ * How records arrive. `interval`: one every `intervalSeconds` (SQL: `seedRows` at
+ * start, then `insertsPerTick` per tick). `fillToLimit`, SQL only: the table is
+ * topped up to `maxRows` at start and nothing follows — the shape of master data,
+ * which exists whole rather than growing. A restart finds the table full and
+ * writes nothing, where seeding would add `seedRows` again.
+ */
+export const cadenceSchema = z.enum(["interval", "fillToLimit"]);
+
+export type Cadence = z.infer<typeof cadenceSchema>;
+
 /** Field keys are dotted paths, so `location.lat` needs no extra syntax. */
 export const scenarioSchema = z.object({
   intervalSeconds: z.number().positive().max(3600).default(10),
+  cadence: cadenceSchema.default("interval"),
   fields: z.record(z.string(), generatorSpecSchema),
 
   // SQL only.
@@ -111,18 +123,59 @@ export const sqlTransportSchema = z.object({
   readDsn: z.string().optional(),
 });
 
+/** A portal artifact: the name a person sees there, and the ids that find it. */
+export const artifactRefSchema = z.object({
+  name: z.string().min(1).max(200),
+  /** Logical CORE URN of the copy on the instance; a versioned form also matches. */
+  urn: z.string().min(1).max(500).optional(),
+  /** The portal's own id for the artifact, for a link. */
+  id: z.string().min(1).max(100).optional(),
+});
+
+export type ArtifactRef = z.infer<typeof artifactRefSchema>;
+
+/**
+ * What a simulation belongs to on the platform, so a person can find it next to
+ * the portal's artifacts and the UI can match it by id rather than by text. The
+ * marketplace takes it from the installation record. It is a snapshot: every
+ * registration replaces it, and nothing here keys the simulation — the id does.
+ */
+export const originSchema = z.object({
+  installationId: z.string().min(1).max(100).optional(),
+  useCase: z
+    .object({ id: z.string().min(1).max(200), name: z.string().min(1).max(200), version: z.string().max(50).optional() })
+    .optional(),
+  dataSet: artifactRefSchema.optional(),
+  dataSource: artifactRefSchema.optional(),
+  dataStructure: artifactRefSchema.optional(),
+  /** The stream's name in the package, as its author wrote it. */
+  stream: z.string().min(1).max(200).optional(),
+});
+
+export type Origin = z.infer<typeof originSchema>;
+
 export const simulationInputSchema = z
   .object({
-    /** For the simulator's UI. The marketplace registers by id and sends neither. */
+    /** For people. The marketplace sends one built from the portal's names. */
     name: z.string().max(200).optional(),
     description: z.string().max(2000).optional(),
+    origin: originSchema.optional(),
     transport: z.union([mqttTransportSchema, sqlTransportSchema]),
     scenario: scenarioSchema,
     /** Registered but paused. */
     enabled: z.boolean().default(true),
   })
   .superRefine((input, ctx) => {
-    if (input.transport.kind !== "sql") return;
+    if (input.transport.kind !== "sql") {
+      if (input.scenario.cadence === "fillToLimit") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "cadence"],
+          message: "fillToLimit is SQL only: a broker keeps no rows to fill up to a limit.",
+        });
+      }
+      return;
+    }
 
     if (!input.scenario.table) {
       ctx.addIssue({

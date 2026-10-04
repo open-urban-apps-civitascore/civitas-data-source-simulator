@@ -2,29 +2,32 @@
 
 import { Trash2 } from "lucide-react";
 
-import { Field, Input, Select } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { CheckedField } from "@/components/ui/checked-field";
+import { Field, Input, Select } from "@/components/ui/input";
+import { ListInput, NumberInput, ScalarInput } from "@/components/ui/parsed-input";
 import { defaultSpec } from "@/lib/describe";
+import { parseNumber, parseScalar } from "@/lib/numbers";
+import { specErrors, type SpecErrors } from "@/lib/spec-checks";
 import { GENERATOR_KINDS, type FieldSpec, type GeneratorSpec } from "@/lib/types";
 
-function parseScalar(raw: string): string | number | boolean {
-  const trimmed = raw.trim();
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (trimmed !== "" && !Number.isNaN(Number(trimmed))) return Number(trimmed);
-  return raw;
-}
+/** A setting the generator cannot do without: emptied, it is NaN, and the check names it. */
+const required = (value: number | undefined) => value ?? Number.NaN;
 
-const num = (e: React.ChangeEvent<HTMLInputElement>) => Number(e.target.value);
+/** An hour that does not read as a number stays in the list as NaN, so the check can name it. */
+const parseHour = (item: string) => parseNumber(item) ?? Number.NaN;
 
 export function FieldEditor({
   field,
   isPrimaryKey,
+  showErrors = false,
   onChange,
   onRemove,
 }: {
   field: FieldSpec;
   isPrimaryKey: boolean;
+  /** After a save attempt every error shows, not only those of inputs already left. */
+  showErrors?: boolean;
   onChange: (next: FieldSpec) => void;
   onRemove: () => void;
 }) {
@@ -59,85 +62,145 @@ export function FieldEditor({
         </div>
       </div>
 
-      <SpecParams spec={spec} onChange={setSpec} />
+      <SpecParams spec={spec} onChange={setSpec} showErrors={showErrors} />
     </div>
   );
 }
 
-function SpecParams({ spec, onChange }: { spec: GeneratorSpec; onChange: (next: GeneratorSpec) => void }) {
+function SpecParams({
+  spec,
+  onChange,
+  showErrors,
+}: {
+  spec: GeneratorSpec;
+  onChange: (next: GeneratorSpec) => void;
+  showErrors: boolean;
+}) {
+  const errors = specErrors(spec);
+  const check = (key: keyof SpecErrors) => ({ error: errors[key], showError: showErrors });
+
   switch (spec.kind) {
     case "now":
       return null;
     case "constant":
       return (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Wert" hint="Zahlen und true/false werden als solche gesendet.">
-            <Input value={String(spec.value)} onChange={(e) => onChange({ ...spec, value: parseScalar(e.target.value) })} />
+          <Field label="Wert" hint="Zahlen (auch mit Komma) und true/false werden als solche gesendet.">
+            <ScalarInput value={spec.value} onValueChange={(value) => onChange({ ...spec, value })} />
           </Field>
         </div>
       );
     case "enum":
       return (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Werte" hint="Kommagetrennt." className="sm:col-span-2">
-            <Input
-              value={spec.values.join(", ")}
-              onChange={(e) =>
-                onChange({ ...spec, values: e.target.value.split(",").map((v) => parseScalar(v.trim())).filter((v) => v !== "") })
-              }
-            />
-          </Field>
+          <CheckedField
+            label="Werte"
+            hint="Durch Komma oder Semikolon getrennt, z. B. Lindenweg, Bremer Platz. Dezimalzahlen mit Punkt."
+            className="sm:col-span-2"
+            {...check("values")}
+          >
+            {(invalid) => (
+              <ListInput
+                values={spec.values}
+                parseItem={parseScalar}
+                invalid={invalid}
+                onValuesChange={(values) => onChange({ ...spec, values })}
+              />
+            )}
+          </CheckedField>
         </div>
       );
     case "randomWalk":
       return (
         <div className="grid gap-3 sm:grid-cols-5">
-          <Field label="Min">
-            <Input type="number" value={spec.min} onChange={(e) => onChange({ ...spec, min: num(e) })} />
-          </Field>
-          <Field label="Max">
-            <Input type="number" value={spec.max} onChange={(e) => onChange({ ...spec, max: num(e) })} />
-          </Field>
-          <Field label="Schritt" hint="Max. Änderung pro Tick">
-            <Input type="number" step="any" value={spec.step} onChange={(e) => onChange({ ...spec, step: num(e) })} />
-          </Field>
-          <Field label="Startwert">
-            <Input
-              type="number"
-              step="any"
-              value={spec.start ?? ""}
-              onChange={(e) => onChange({ ...spec, start: e.target.value === "" ? undefined : num(e) })}
-            />
-          </Field>
+          <CheckedField label="Min" {...check("min")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.min}
+                integer={spec.integer}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, min: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Max" {...check("max")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.max}
+                integer={spec.integer}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, max: required(value) })}
+              />
+            )}
+          </CheckedField>
+          {/* Fractions stay allowed with "Ganzzahl": the walk moves by them, only what it sends is rounded. */}
+          <CheckedField label="Schritt" hint="Max. Änderung pro Tick" {...check("step")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.step}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, step: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Startwert" hint="Leer: in der Mitte" {...check("start")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.start}
+                integer={spec.integer}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, start: value })}
+              />
+            )}
+          </CheckedField>
           <IntegerToggle checked={spec.integer ?? false} onChange={(integer) => onChange({ ...spec, integer })} />
         </div>
       );
     case "dailyProfile":
       return (
         <div className="grid gap-3 sm:grid-cols-5">
-          <Field label="Min (nachts)">
-            <Input type="number" value={spec.min} onChange={(e) => onChange({ ...spec, min: num(e) })} />
-          </Field>
-          <Field label="Max (Spitze)">
-            <Input type="number" value={spec.max} onChange={(e) => onChange({ ...spec, max: num(e) })} />
-          </Field>
-          <Field label="Spitzenstunden" hint="Kommagetrennt, 0–23">
-            <Input
-              value={spec.peakHours.join(", ")}
-              onChange={(e) =>
-                onChange({
-                  ...spec,
-                  peakHours: e.target.value
-                    .split(",")
-                    .map((v) => Number(v.trim()))
-                    .filter((v) => Number.isInteger(v) && v >= 0 && v <= 23),
-                })
-              }
-            />
-          </Field>
-          <Field label="Rauschen" hint="0 = glatt, 1 = wild">
-            <Input type="number" step="0.05" min={0} max={1} value={spec.noise} onChange={(e) => onChange({ ...spec, noise: num(e) })} />
-          </Field>
+          <CheckedField label="Min (nachts)" {...check("min")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.min}
+                integer={spec.integer}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, min: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Max (Spitze)" {...check("max")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.max}
+                integer={spec.integer}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, max: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Spitzenstunden" hint="0 bis 23, durch Komma oder Semikolon getrennt" {...check("peakHours")}>
+            {(invalid) => (
+              <ListInput
+                values={spec.peakHours}
+                parseItem={parseHour}
+                formatItem={(hour) => (Number.isNaN(hour) ? "" : String(hour))}
+                inputMode="decimal"
+                invalid={invalid}
+                onValuesChange={(peakHours) => onChange({ ...spec, peakHours })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Rauschen" hint="0 = glatt, 1 = wild" {...check("noise")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.noise}
+                placeholder="0,1"
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, noise: value })}
+              />
+            )}
+          </CheckedField>
           <IntegerToggle checked={spec.integer ?? false} onChange={(integer) => onChange({ ...spec, integer })} />
         </div>
       );
@@ -147,26 +210,62 @@ function SpecParams({ spec, onChange }: { spec: GeneratorSpec; onChange: (next: 
           <Field label="Präfix">
             <Input value={spec.prefix} onChange={(e) => onChange({ ...spec, prefix: e.target.value })} className="font-mono" />
           </Field>
-          <Field label="Start">
-            <Input type="number" value={spec.start} onChange={(e) => onChange({ ...spec, start: num(e) })} />
-          </Field>
-          <Field label="Stellen auffüllen" hint="0 = keine führenden Nullen">
-            <Input type="number" min={0} max={12} value={spec.padTo} onChange={(e) => onChange({ ...spec, padTo: num(e) })} />
-          </Field>
+          <CheckedField label="Start" {...check("start")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.start}
+                integer
+                placeholder="1"
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, start: value })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Stellen auffüllen" hint="0 = keine führenden Nullen" {...check("padTo")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.padTo}
+                integer
+                placeholder="0"
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, padTo: value })}
+              />
+            )}
+          </CheckedField>
         </div>
       );
     case "jitter":
       return (
         <div className="grid gap-3 sm:grid-cols-4">
-          <Field label="Mittelpunkt">
-            <Input type="number" step="any" value={spec.center} onChange={(e) => onChange({ ...spec, center: num(e) })} />
-          </Field>
-          <Field label="Streuung ±">
-            <Input type="number" step="any" value={spec.spread} onChange={(e) => onChange({ ...spec, spread: num(e) })} />
-          </Field>
-          <Field label="Nachkommastellen">
-            <Input type="number" min={0} max={12} value={spec.precision} onChange={(e) => onChange({ ...spec, precision: num(e) })} />
-          </Field>
+          <CheckedField label="Mittelpunkt" {...check("center")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.center}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, center: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Streuung ±" {...check("spread")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.spread}
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, spread: required(value) })}
+              />
+            )}
+          </CheckedField>
+          <CheckedField label="Nachkommastellen" {...check("precision")}>
+            {(invalid) => (
+              <NumberInput
+                value={spec.precision}
+                integer
+                placeholder="6"
+                invalid={invalid}
+                onValueChange={(value) => onChange({ ...spec, precision: value })}
+              />
+            )}
+          </CheckedField>
         </div>
       );
   }

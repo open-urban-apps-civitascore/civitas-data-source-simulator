@@ -52,6 +52,14 @@ export function assertSameDatabase(writeDsn: string, readDsn: string | undefined
   }
 }
 
+/** Postgres refuses a statement that binds more parameters than this. */
+const MAX_BIND_PARAMETERS = 65_535;
+
+/** Rows per INSERT: a fill or seed of a wide table would exceed the cap in one. */
+export function rowsPerStatement(columnCount: number): number {
+  return Math.max(1, Math.floor(MAX_BIND_PARAMETERS / Math.max(1, columnCount)));
+}
+
 export interface SqlWriter {
   ensureTable(): Promise<void>;
   /** Highest counter used for `prefix`, so a restart continues the series. */
@@ -84,6 +92,33 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
   }
 
   const columns = Object.keys(spec.columns);
+
+  // Upsert, never delete: a row removed here would stay on the map forever.
+  const updates = columns
+    .filter((column) => column !== spec.primaryKey)
+    .map((column) => `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`);
+
+  const conflict = updates.length
+    ? `ON CONFLICT (${primaryKey}) DO UPDATE SET ${updates.join(", ")}`
+    : `ON CONFLICT (${primaryKey}) DO NOTHING`;
+
+  const insert = async (rows: Record<string, unknown>[]): Promise<number> => {
+    const placeholders: string[] = [];
+    const values: unknown[] = [];
+    rows.forEach((row, rowIndex) => {
+      const slots = columns.map((_, columnIndex) => `$${rowIndex * columns.length + columnIndex + 1}`);
+      placeholders.push(`(${slots.join(", ")})`);
+      values.push(...columns.map((column) => row[column] ?? null));
+    });
+
+    const result = await pool.query(
+      `INSERT INTO ${qualified} (${columns.map(quoteIdent).join(", ")})
+       VALUES ${placeholders.join(", ")}
+       ${conflict}`,
+      values,
+    );
+    return result.rowCount ?? 0;
+  };
 
   return {
     async ensureTable() {
@@ -119,31 +154,12 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
     },
 
     async write(rows) {
-      if (rows.length === 0) return 0;
-      const placeholders: string[] = [];
-      const values: unknown[] = [];
-      rows.forEach((row, rowIndex) => {
-        const slots = columns.map((_, columnIndex) => `$${rowIndex * columns.length + columnIndex + 1}`);
-        placeholders.push(`(${slots.join(", ")})`);
-        values.push(...columns.map((column) => row[column] ?? null));
-      });
-
-      // Upsert, never delete: a row removed here would stay on the map forever.
-      const updates = columns
-        .filter((column) => column !== spec.primaryKey)
-        .map((column) => `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`);
-
-      const conflict = updates.length
-        ? `ON CONFLICT (${primaryKey}) DO UPDATE SET ${updates.join(", ")}`
-        : `ON CONFLICT (${primaryKey}) DO NOTHING`;
-
-      const result = await pool.query(
-        `INSERT INTO ${qualified} (${columns.map(quoteIdent).join(", ")})
-         VALUES ${placeholders.join(", ")}
-         ${conflict}`,
-        values,
-      );
-      return result.rowCount ?? 0;
+      const size = rowsPerStatement(columns.length);
+      let written = 0;
+      for (let start = 0; start < rows.length; start += size) {
+        written += await insert(rows.slice(start, start + size));
+      }
+      return written;
     },
 
     async close() {

@@ -10,7 +10,7 @@ import { StatusBadge, TransportBadge } from "@/components/simulations/status-bad
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { fetchSimulations, switchSimulation } from "@/lib/client";
-import { formatDateTime, formatInterval, formatNumber, formatRelative } from "@/lib/format";
+import { formatCadence, formatDateTime, formatNumber, formatRelative } from "@/lib/format";
 import type { SimulationStatus } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
 
@@ -169,7 +169,7 @@ export function SimulationList({ initial }: { initial: SimulationStatus[] }) {
                   {sim.topic ?? sim.target}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                  {formatInterval(sim.intervalSeconds)}
+                  {formatCadence(sim)}
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge sim={sim} />

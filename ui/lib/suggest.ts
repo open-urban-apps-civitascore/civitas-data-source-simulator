@@ -38,6 +38,8 @@ export function draftFromDataStructure(ds: PortalDataStructure, brokerUrl: strin
   return {
     name,
     description: `Aus der Portal-Datenstruktur ${ds.name} ${ds.version} abgeleitet.`,
+    // Ties it to the structure by id, as an installed stream is tied by the marketplace.
+    origin: { dataStructure: { name: ds.name, urn: ds.urn } },
     enabled: false,
     transport: isTable
       ? { kind: "sql", table: `${ds.domain.toLowerCase()}.${slugify(ds.name).replace(/-/g, "_")}` }

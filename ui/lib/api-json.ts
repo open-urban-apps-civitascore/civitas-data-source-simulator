@@ -3,6 +3,7 @@
 
 import type {
   GeneratorSpec,
+  Origin,
   Scenario,
   SimulationDraft,
   SimulationInput,
@@ -17,10 +18,16 @@ export function toInput(draft: SimulationDraft): SimulationInput {
   return {
     ...(draft.name ? { name: draft.name } : {}),
     ...(draft.description ? { description: draft.description } : {}),
+    ...(draft.origin ? { origin: draft.origin } : {}),
     enabled: draft.enabled,
     transport: draft.transport,
     scenario: {
-      intervalSeconds: draft.scenario.intervalSeconds,
+      // A fill has no interval and hides its input, so a value emptied before
+      // the switch must not fail the save; the service's default stands in.
+      intervalSeconds:
+        sql && draft.scenario.cadence === "fillToLimit" && !Number.isFinite(draft.scenario.intervalSeconds)
+          ? 10
+          : draft.scenario.intervalSeconds,
       fields,
       ...(sql
         ? {
@@ -33,6 +40,7 @@ export function toInput(draft: SimulationDraft): SimulationInput {
             seedRows: draft.scenario.seedRows ?? 0,
             insertsPerTick: draft.scenario.insertsPerTick ?? 1,
             maxRows: draft.scenario.maxRows,
+            ...(draft.scenario.cadence === "fillToLimit" ? { cadence: "fillToLimit" as const } : {}),
           }
         : {}),
     },
@@ -78,6 +86,7 @@ export function toScenario(draft: SimulationDraft): WireScenario {
 export function toDraft(input: SimulationInput): SimulationDraft {
   const scenario: Scenario = {
     intervalSeconds: input.scenario.intervalSeconds,
+    cadence: input.scenario.cadence,
     fields: Object.entries(input.scenario.fields).map(([name, spec]) => ({ name, spec })),
     primaryKey: input.scenario.table?.primaryKey,
     seedRows: input.scenario.seedRows,
@@ -87,6 +96,7 @@ export function toDraft(input: SimulationInput): SimulationDraft {
   return {
     name: input.name ?? "",
     description: input.description ?? "",
+    ...(input.origin ? { origin: input.origin } : {}),
     enabled: input.enabled,
     transport: input.transport,
     scenario,
@@ -144,10 +154,13 @@ export function fromJson(text: string): SimulationDraft {
   return {
     name: typeof raw.name === "string" ? raw.name : "",
     description: typeof raw.description === "string" ? raw.description : "",
+    // Checked by the service on save; here it only has to survive the round trip.
+    ...(isObject(raw.origin) ? { origin: raw.origin as Origin } : {}),
     enabled: raw.enabled !== false,
     transport: parsedTransport,
     scenario: {
       intervalSeconds: num(scenario.intervalSeconds) ?? 10,
+      cadence: scenario.cadence === "fillToLimit" ? "fillToLimit" : undefined,
       fields,
       primaryKey: table && typeof table.primaryKey === "string" ? table.primaryKey : undefined,
       seedRows: num(scenario.seedRows),

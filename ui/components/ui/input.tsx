@@ -41,11 +41,14 @@ export function Select({ className, children, ...props }: React.ComponentProps<"
 export function Field({
   label,
   hint,
+  error,
   children,
   className,
 }: {
   label: string;
   hint?: string;
+  /** Shown in place of the hint: what is wrong with the value, and what would fix it. */
+  error?: string;
   children: React.ReactNode;
   className?: string;
 }) {
@@ -53,7 +56,11 @@ export function Field({
     <label className={cn("flex flex-col gap-1.5", className)}>
       <span className="text-sm font-medium">{label}</span>
       {children}
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+      {error ? (
+        <span className="text-xs text-error">{error}</span>
+      ) : hint ? (
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      ) : null}
     </label>
   );
 }

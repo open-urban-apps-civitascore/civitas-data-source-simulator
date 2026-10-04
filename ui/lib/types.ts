@@ -26,9 +26,13 @@ export type MqttTransport = { kind: "mqtt"; url: string; topic: string };
 export type SqlTransport = { kind: "sql"; table: string; dsn?: string; readDsn?: string };
 export type Transport = MqttTransport | SqlTransport;
 
+/** `fillToLimit`: SQL only. The table is filled to `maxRows` at start, nothing follows. */
+export type Cadence = "interval" | "fillToLimit";
+
 /** Fields are a map of dotted path to generator. */
 export interface WireScenario {
   intervalSeconds: number;
+  cadence?: Cadence;
   fields: Record<string, GeneratorSpec>;
   table?: { rowSchema?: unknown; rowClass?: string; columns?: Record<string, ColumnType>; primaryKey?: string };
   seedRows?: number;
@@ -37,9 +41,30 @@ export interface WireScenario {
   timeCompression?: string;
 }
 
+/** A portal artifact: the name shown there, and the ids that find it. */
+export interface ArtifactRef {
+  name: string;
+  /** Logical CORE URN; a versioned form of it names the same artifact. */
+  urn?: string;
+  /** The portal's own id. */
+  id?: string;
+}
+
+/** What a simulation belongs to on the platform. The marketplace sends it; a snapshot. */
+export interface Origin {
+  installationId?: string;
+  useCase?: { id: string; name: string; version?: string };
+  dataSet?: ArtifactRef;
+  dataSource?: ArtifactRef;
+  dataStructure?: ArtifactRef;
+  /** The stream's name in the package. */
+  stream?: string;
+}
+
 export interface SimulationInput {
   name?: string;
   description?: string;
+  origin?: Origin;
   enabled: boolean;
   transport: Transport;
   scenario: WireScenario;
@@ -49,11 +74,15 @@ export interface SimulationStatus {
   id: string;
   name: string | null;
   description: string | null;
+  /** Absent from services older than the origin; null for a simulation made by hand. */
+  origin?: Origin | null;
   enabled: boolean;
   transport: "mqtt" | "sql";
   topic: string | null;
   target: string;
   intervalSeconds: number;
+  /** Absent from services older than the cadence. */
+  cadence?: Cadence;
   createdAt: string;
   publishedCount: number;
   rowCount: number | null;
@@ -77,6 +106,7 @@ export interface FieldSpec {
 
 export interface Scenario {
   intervalSeconds: number;
+  cadence?: Cadence;
   fields: FieldSpec[];
   primaryKey?: string;
   seedRows?: number;
@@ -87,6 +117,8 @@ export interface Scenario {
 export interface SimulationDraft {
   name: string;
   description: string;
+  /** Not edited here, only carried through: a save must not cut the link to the portal. */
+  origin?: Origin;
   enabled: boolean;
   transport: Transport;
   scenario: Scenario;

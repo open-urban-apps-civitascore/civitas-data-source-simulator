@@ -7,6 +7,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Key, Plus } from "lucide-reac
 import { PageBody } from "@/components/layout/page-body";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { feedsDataStructure } from "@/lib/origin";
 import type { DataStructureProperty, PortalDataStructure, SimulationStatus } from "@/lib/types";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -65,7 +66,7 @@ export function DataStructureList({
         <div className="grid gap-3">
           {structures.map((ds) => {
             const expanded = open === ds.urn;
-            const sims = simulations.filter((s) => (s.description ?? "").includes(ds.name));
+            const sims = simulations.filter((s) => feedsDataStructure(s, ds));
             return (
               <div key={ds.urn} className="rounded-lg border bg-card shadow-xs">
                 <div className="flex items-start gap-3 px-4 py-3">

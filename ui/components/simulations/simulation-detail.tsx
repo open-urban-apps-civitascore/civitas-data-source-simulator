@@ -15,7 +15,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { toDraft, toJson } from "@/lib/api-json";
 import { removeSimulation, switchSimulation } from "@/lib/client";
-import { formatDateTime, formatInterval, formatNumber, formatRelative } from "@/lib/format";
+import { formatCadence, formatDateTime, formatNumber, formatRelative } from "@/lib/format";
 import type { SimulationDetail as Detail } from "@/lib/types";
 import { useSimulationStream } from "@/lib/use-poll";
 
@@ -56,7 +56,20 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
     }
   };
 
+  // The portal's own names, so this simulation can be found next to what it feeds.
+  const origin = sim.origin;
+  const belongsTo: { label: string; value: React.ReactNode }[] = [
+    ...(origin?.useCase
+      ? [{ label: "Use Case", value: [origin.useCase.name, origin.useCase.version].filter(Boolean).join(" ") }]
+      : []),
+    ...(origin?.dataSet ? [{ label: "Datensatz", value: origin.dataSet.name }] : []),
+    ...(origin?.dataSource ? [{ label: "Datenquelle", value: origin.dataSource.name }] : []),
+    ...(origin?.dataStructure ? [{ label: "Datenstruktur", value: origin.dataStructure.name }] : []),
+    ...(origin?.stream ? [{ label: "Stream", value: <span className="font-mono text-xs">{origin.stream}</span> }] : []),
+  ];
+
   const facts: { label: string; value: React.ReactNode }[] = [
+    ...belongsTo,
     { label: "Typ", value: <TransportBadge sim={sim} /> },
     {
       label: sim.transport === "mqtt" ? "Broker" : "Datenbank",
@@ -70,7 +83,7 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
       label: sim.transport === "mqtt" ? "Topic" : "Tabelle",
       value: <span className="font-mono text-xs">{sim.topic ?? sim.target}</span>,
     },
-    { label: "Takt", value: formatInterval(sim.intervalSeconds) },
+    { label: "Takt", value: formatCadence(sim) },
     { label: "Erzeugt", value: formatDateTime(sim.createdAt) },
     {
       label: sim.transport === "mqtt" ? "Nachrichten gesendet" : "Zeilen geschrieben",
