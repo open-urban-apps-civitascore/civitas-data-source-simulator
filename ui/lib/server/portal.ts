@@ -123,6 +123,25 @@ function readProperties(
   return out;
 }
 
+function currentVersionOf(
+  structure: Record<string, unknown>,
+): { id: string; version: string } | undefined {
+  const versions = Array.isArray(structure.dataStructureVersions)
+    ? structure.dataStructureVersions
+    : [];
+  let current: { id: string; version: string } | undefined;
+  for (const candidate of versions) {
+    if (!isRecord(candidate)) continue;
+    const id = typeof candidate.id === "string" ? candidate.id : "";
+    const version = typeof candidate.version === "string" ? candidate.version : "";
+    if (!id || !version) continue;
+    if (!current || version.localeCompare(current.version, undefined, { numeric: true }) > 0) {
+      current = { id, version };
+    }
+  }
+  return current;
+}
+
 /** `urn:core:standard:openurbanapps:datastructure:mobility:name:hash` */
 function segmentsOf(urn: string): { domain: string; publisher: string } {
   const parts = urn.split(":");
@@ -146,16 +165,11 @@ export async function fetchPortalDataStructures(): Promise<PortalDataStructure[]
   for (const structure of page?.content ?? []) {
     const id = String(structure.id ?? "");
     if (!id) continue;
-    const versions = await getJson<Page<Record<string, unknown>>>(
-      `/datastructures/${id}/versions?size=50`,
-      token,
-    );
-    // Newest last in the platform's ordering, so the last entry is current.
-    const latest = versions?.content?.at(-1);
-    if (!latest?.id) continue;
+    const latest = currentVersionOf(structure);
+    if (!latest) continue;
 
     const detail = await getJson<Record<string, unknown>>(
-      `/datastructures/${id}/versions/${String(latest.id)}`,
+      `/datastructures/${id}/versions/${latest.id}`,
       token,
     );
     if (!detail || !isRecord(detail.model)) continue;
@@ -171,7 +185,7 @@ export async function fetchPortalDataStructures(): Promise<PortalDataStructure[]
         (typeof structure.name === "string" && structure.name) ||
         (typeof detail.model.title === "string" && detail.model.title) ||
         id,
-      version: typeof latest.version === "string" ? latest.version : "1.0.0",
+      version: latest.version,
       description:
         (typeof structure.description === "string" && structure.description) ||
         (typeof detail.model.description === "string" && detail.model.description) ||
