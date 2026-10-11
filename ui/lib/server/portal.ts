@@ -198,3 +198,43 @@ export async function fetchPortalDataStructures(): Promise<PortalDataStructure[]
   }
   return out;
 }
+
+/** What a stream needs to know of the portal data source it is made for. */
+export interface PortalDataSource {
+  id: string;
+  name: string;
+  /** Logical or versioned CORE URN of the source, when the portal names one. */
+  urn?: string;
+  kind: "mqtt" | "sql" | "other";
+  /** MQTT subscriptions; the first decides where a stream publishes. */
+  topics: string[];
+  /** The table a SQL source reads. */
+  table?: string;
+}
+
+/** A portal id: anything else never reaches the request path. */
+const SOURCE_ID = /^[A-Za-z0-9-]{1,100}$/;
+
+/**
+ * One data source, read with the signed-in person's token. Undefined for an
+ * unknown or unreadable id, so a stale link opens the form without the binding.
+ */
+export async function fetchPortalDataSource(id: string): Promise<PortalDataSource | undefined> {
+  if (!BASE_URL || !SOURCE_ID.test(id)) return undefined;
+  const token = await getAccessToken();
+  if (!token) return undefined;
+  const dto = await getJson<Record<string, unknown>>(`/datasources/${id}`, token).catch(() => undefined);
+  if (!dto) return undefined;
+  const configuration = isRecord(dto.configuration) ? dto.configuration : {};
+  const kind = String(dto.connectorType ?? "").toLowerCase();
+  return {
+    id: String(dto.id ?? id),
+    name: typeof dto.name === "string" && dto.name ? dto.name : id,
+    ...(typeof dto.configurationUrn === "string" ? { urn: dto.configurationUrn } : {}),
+    kind: kind === "mqtt" || kind === "sql" ? kind : "other",
+    topics: Array.isArray(configuration.topics)
+      ? configuration.topics.filter((topic): topic is string => typeof topic === "string")
+      : [],
+    ...(typeof configuration.table === "string" && configuration.table ? { table: configuration.table } : {}),
+  };
+}

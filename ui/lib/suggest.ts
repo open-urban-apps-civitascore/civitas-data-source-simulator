@@ -51,3 +51,42 @@ export function draftFromDataStructure(ds: PortalDataStructure, brokerUrl: strin
     },
   };
 }
+
+/** The part of a portal data source a binding needs (lib/server/portal.ts reads it). */
+export interface BindableSource {
+  id: string;
+  name: string;
+  urn?: string;
+  kind: "mqtt" | "sql" | "other";
+  topics: string[];
+  table?: string;
+}
+
+/**
+ * Ties a draft to the data source it is meant to feed: the stream publishes
+ * where the source listens (a subtopic under a `+` or `#` subscription, the
+ * topic itself otherwise) or fills the table it reads, and the origin records
+ * the source. That record is how the marketplace finds the stream again when
+ * the use case is shared, and how a person reads where it belongs.
+ */
+export function bindToDataSource(draft: SimulationDraft, source: BindableSource): SimulationDraft {
+  const name = `${source.name} (Simulation)`;
+  const origin = { ...draft.origin, dataSource: { name: source.name, id: source.id, ...(source.urn ? { urn: source.urn } : {}) } };
+  if (source.kind === "sql" && source.table) {
+    return {
+      ...draft,
+      name,
+      origin,
+      transport: { kind: "sql", table: source.table },
+      scenario: { seedRows: 100, insertsPerTick: 1, maxRows: 5000, ...draft.scenario, intervalSeconds: draft.scenario.intervalSeconds || 60 },
+    };
+  }
+  const subscription = source.topics[0];
+  if (source.kind === "mqtt" && subscription) {
+    const wildcard = subscription.endsWith("/+") || subscription.endsWith("/#");
+    const topic = wildcard ? `${subscription.slice(0, -2)}/${slugify(source.name)}` : subscription;
+    const url = draft.transport.kind === "mqtt" ? draft.transport.url : "";
+    return { ...draft, name, origin, transport: { kind: "mqtt", url, topic } };
+  }
+  return { ...draft, origin };
+}

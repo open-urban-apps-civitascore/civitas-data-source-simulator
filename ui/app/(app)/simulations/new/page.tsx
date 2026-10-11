@@ -4,22 +4,30 @@ import { AppHeader } from "@/components/layout/app-header";
 import { SimulationEditor } from "@/components/simulations/simulation-editor";
 import { findDataStructure } from "@/lib/server/datastructures";
 import { getDefaultBrokerUrl } from "@/lib/server/generator";
-import { draftFromDataStructure } from "@/lib/suggest";
+import { fetchPortalDataSource } from "@/lib/server/portal";
+import { bindToDataSource, draftFromDataStructure } from "@/lib/suggest";
 import { requireSession } from "@/lib/server/session";
 
 /**
- * `?from=<urn>` pre-fills the form. Read on the server: a client hook would need
+ * `?from=<urn>` pre-fills the form; `&source=<id>` binds it to the portal data
+ * source it is meant for (the marketplace links here when a shared use case
+ * has a source without demo data). Read on the server: a client hook would need
  * a Suspense boundary, which rendered the editor twice and left the preview's
  * state in the copy nobody sees.
  */
 export default async function NewSimulationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; mode?: string }>;
+  searchParams: Promise<{ from?: string; mode?: string; source?: string }>;
 }) {
   await requireSession();
-  const { from, mode } = await searchParams;
-  const [ds, brokerUrl] = await Promise.all([findDataStructure(from), getDefaultBrokerUrl()]);
+  const { from, mode, source } = await searchParams;
+  const [ds, brokerUrl, dataSource] = await Promise.all([
+    findDataStructure(from),
+    getDefaultBrokerUrl(),
+    source ? fetchPortalDataSource(source) : Promise.resolve(undefined),
+  ]);
+  const draft = ds ? draftFromDataStructure(ds, brokerUrl) : undefined;
 
   return (
     <>
@@ -35,8 +43,8 @@ export default async function NewSimulationPage({
         }
       />
       <SimulationEditor
-        key={ds?.urn ?? "blank"}
-        initial={ds ? draftFromDataStructure(ds, brokerUrl) : undefined}
+        key={`${ds?.urn ?? "blank"}:${dataSource?.id ?? ""}`}
+        initial={draft && dataSource ? bindToDataSource(draft, dataSource) : draft}
         defaultBrokerUrl={brokerUrl}
         fromDataStructure={ds?.name}
         initialMode={mode === "json" ? "json" : "fields"}
