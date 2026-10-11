@@ -43,8 +43,18 @@ export async function getDataStructures(): Promise<StructureResult> {
   }
 }
 
+/**
+ * Finds a structure by its URN, logical or versioned: the list holds each
+ * structure's current version, while a link may name another version, or none
+ * (the marketplace links with the logical URN of the version a source uses).
+ */
 export async function findDataStructure(urn?: string): Promise<PortalDataStructure | undefined> {
   if (!urn) return undefined;
   const { structures } = await getDataStructures();
-  return structures.find((s) => s.urn === urn);
+  return structures.find((s) => s.urn === urn) ?? structures.find((s) => logicalUrn(s.urn) === logicalUrn(urn));
+}
+
+/** `urn:core:…:<name>:<disambiguator>:<version>` without its version; other URNs unchanged. */
+function logicalUrn(urn: string): string {
+  return urn.startsWith("urn:core:") ? urn.replace(/:\d+\.\d+\.\d+$/, "") : urn;
 }
