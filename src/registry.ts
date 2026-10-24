@@ -276,7 +276,7 @@ export class Registry {
     }
     const maxRows = scenario.maxRows;
 
-    const dsn = resolveSqlDsn(transport.dsn);
+    const dsn = resolveSqlDsn();
     assertSameDatabase(dsn, transport.readDsn);
 
     const resolved = resolveTable(spec);

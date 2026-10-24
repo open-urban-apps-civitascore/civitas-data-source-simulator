@@ -167,19 +167,14 @@ describe("sequence and jitter", () => {
 });
 
 describe("resolveSqlDsn", () => {
-  it("falls back to the generator's own database when the request names none", () => {
+  it("writes where the generator's own database setting points", () => {
     process.env[DEMO_DB_DSN_VAR] = "postgres://kataster@localhost:5544/fachverfahren";
-    expect(resolveSqlDsn(undefined)).toBe("postgres://kataster@localhost:5544/fachverfahren");
+    expect(resolveSqlDsn()).toBe("postgres://kataster@localhost:5544/fachverfahren");
   });
 
-  it("lets a request override it, for an operator's own database", () => {
-    process.env[DEMO_DB_DSN_VAR] = "postgres://kataster@localhost:5544/fachverfahren";
-    expect(resolveSqlDsn("postgres://elsewhere/db")).toBe("postgres://elsewhere/db");
-  });
-
-  it("refuses rather than guessing when neither is set", () => {
+  it("refuses rather than guessing when it is not set", () => {
     delete process.env[DEMO_DB_DSN_VAR];
-    expect(() => resolveSqlDsn(undefined)).toThrow(/No database configured/);
+    expect(() => resolveSqlDsn()).toThrow(/No database configured/);
   });
 });
 

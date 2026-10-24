@@ -25,12 +25,16 @@ vi.mock("./sql-writer.js", () => ({
   })),
 }));
 
+import { DEMO_DB_DSN_VAR } from "./config.js";
 import { Registry } from "./registry.js";
 import { simulationInputSchema, type SimulationInput } from "./types.js";
 
+// Set here, not taken from a local .env.
+process.env[DEMO_DB_DSN_VAR] = "postgres://demo@db:5432/demo_source";
+
 function sqlInput(scenario: Record<string, unknown>): SimulationInput {
   return simulationInputSchema.parse({
-    transport: { kind: "sql", dsn: "postgres://demo@db:5432/demo_source", table: "kataster.baeume" },
+    transport: { kind: "sql", table: "kataster.baeume" },
     scenario: {
       intervalSeconds: 10,
       table: { columns: { baum_id: "text", art: "text" }, primaryKey: "baum_id" },

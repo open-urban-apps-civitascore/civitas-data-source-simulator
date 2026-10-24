@@ -20,12 +20,10 @@ export function defaultBrokerUrl(): string | null {
 }
 
 /** No baked-in default: a wrong-but-plausible address is the failure to avoid. */
-export function resolveSqlDsn(requestDsn: string | undefined): string {
-  const dsn = requestDsn?.trim() || process.env[DEMO_DB_DSN_VAR]?.trim();
+export function resolveSqlDsn(): string {
+  const dsn = process.env[DEMO_DB_DSN_VAR]?.trim();
   if (!dsn) {
-    throw new Error(
-      `No database configured: set ${DEMO_DB_DSN_VAR} on the generator, or pass transport.dsn.`,
-    );
+    throw new Error(`No database configured: set ${DEMO_DB_DSN_VAR} on the generator.`);
   }
   return dsn;
 }

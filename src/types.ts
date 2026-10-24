@@ -124,14 +124,22 @@ export const mqttTransportSchema = z.object({
   topic: z.string().min(1),
 });
 
+/** Without user and password; undefined when it is no URL. */
+function withoutCredentials(dsn: string | undefined): string | undefined {
+  if (!dsn || !URL.canParse(dsn)) return undefined;
+  const url = new URL(dsn);
+  url.username = "";
+  url.password = "";
+  return url.toString();
+}
+
+// Callers name a table; the address is the generator's DEMO_DB_DSN (config.ts).
 export const sqlTransportSchema = z.object({
   kind: z.literal("sql"),
-  /** Override; the generator's own DEMO_DB_DSN is the default. See config.ts. */
-  dsn: z.string().min(1).optional(),
   /** Schema-qualified, e.g. `kataster.kiez_baeume`. */
   table: z.string().min(1),
-  /** Where the platform reads, if known — see `assertSameDatabase`. */
-  readDsn: z.string().optional(),
+  /** Where the platform reads, if known; only its database name is compared (`assertSameDatabase`). */
+  readDsn: z.string().optional().transform(withoutCredentials),
 });
 
 /** A portal artifact: the name a person sees there, and the ids that find it. */

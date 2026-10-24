@@ -5,6 +5,7 @@ import {
   INVALID_BROKER_URL,
   mqttTransportSchema,
   simulationInputSchema,
+  sqlTransportSchema,
 } from "./types.js";
 
 describe("scenario cadence", () => {
@@ -93,5 +94,26 @@ describe("mqttTransportSchema", () => {
       expect(result.success, url).toBe(false);
       expect(result.error?.issues[0]?.message).toBe(INVALID_BROKER_URL);
     }
+  });
+});
+
+describe("sqlTransportSchema", () => {
+  it("keeps the platform's read address without user and password", () => {
+    const parsed = sqlTransportSchema.parse({
+      kind: "sql",
+      table: "kataster.baeume",
+      readDsn: "postgres://kataster:geheim@baumkataster-db:5432/fachverfahren",
+    });
+    expect(parsed.readDsn).toBe("postgres://baumkataster-db:5432/fachverfahren");
+  });
+
+  it("drops a read address that is no address, and any write address a caller sends", () => {
+    const parsed = sqlTransportSchema.parse({
+      kind: "sql",
+      table: "kataster.baeume",
+      readDsn: "host=db password=geheim",
+      dsn: "postgres://demo:geheim@elsewhere:5432/db",
+    });
+    expect(parsed).toEqual({ kind: "sql", table: "kataster.baeume" });
   });
 });
