@@ -276,7 +276,9 @@ export class Registry {
       if (highest !== null) resume[field] = highest + 1;
     }
     simulation.render = compileScenario(scenario, resume);
-    simulation.rowCount = await writer.countRows();
+    const rowsAtStart = await writer.countRows();
+    simulation.rowCount = rowsAtStart;
+    simulation.atCap = rowsAtStart >= maxRows;
 
     const writeRows = async (count: number) => {
       const room = Math.max(0, maxRows - (simulation.rowCount ?? 0));
@@ -289,10 +291,10 @@ export class Registry {
       this.recordSuccess(simulation, written, rows.at(-1) ?? null);
     };
 
-    // Seed now, so the map is never empty while the first tick is pending. A fill
-    // asks for the whole limit; `writeRows` only adds what the table lacks.
+    // Seed now, so the map is never empty. Top up rather than append, so a
+    // restart writes only what the table lacks.
     const fill = scenario.cadence === "fillToLimit";
-    const initialRows = fill ? maxRows : scenario.seedRows;
+    const initialRows = Math.max(0, (fill ? maxRows : scenario.seedRows) - rowsAtStart);
     if (initialRows > 0) {
       try {
         await writeRows(initialRows);

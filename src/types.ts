@@ -67,11 +67,11 @@ export const tableSpecSchema = z.object({
 export type TableSpec = z.infer<typeof tableSpecSchema>;
 
 /**
- * How records arrive. `interval`: one every `intervalSeconds` (SQL: `seedRows` at
- * start, then `insertsPerTick` per tick). `fillToLimit`, SQL only: the table is
- * topped up to `maxRows` at start and nothing follows — the shape of master data,
- * which exists whole rather than growing. A restart finds the table full and
- * writes nothing, where seeding would add `seedRows` again.
+ * How records arrive. `interval`: one every `intervalSeconds` (SQL: topped up to
+ * `seedRows` at start, then `insertsPerTick` per tick). `fillToLimit`, SQL only:
+ * the table is topped up to `maxRows` at start and nothing follows — the shape of
+ * master data, which exists whole rather than growing. Either way a restart
+ * writes only what the table lacks.
  */
 export const cadenceSchema = z.enum(["interval", "fillToLimit"]);
 
@@ -85,7 +85,7 @@ export const scenarioSchema = z.object({
 
   // SQL only.
   table: tableSpecSchema.optional(),
-  /** Written at start-up, so the map is never empty. */
+  /** Topped up to this many rows at start, so the map is never empty. */
   seedRows: z.number().int().min(0).max(10_000).default(0),
   insertsPerTick: z.number().int().min(0).max(100).default(1),
   /** Mandatory for SQL: every pipeline run re-reads the whole table. */

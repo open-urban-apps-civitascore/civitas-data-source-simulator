@@ -208,8 +208,9 @@ describe("Registry, SQL transport", () => {
     table.length = 0;
     table.push({ baum_id: "KB-007", lon: 7.6 });
 
+    // One row is there, so topping up to three writes two, numbered after it.
     const registry = new Registry();
-    await registry.put("trees", simulationInputSchema.parse(sqlInput({ seedRows: 2 })));
+    await registry.put("trees", simulationInputSchema.parse(sqlInput({ seedRows: 3 })));
 
     expect(table.map((row) => row.baum_id)).toEqual(["KB-007", "KB-008", "KB-009"]);
     await registry.shutdown();

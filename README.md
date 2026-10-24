@@ -202,13 +202,12 @@ Editing a simulation in the UI keeps its origin.
 
 | Cadence | Behaviour |
 | --- | --- |
-| `interval` (default) | One record every `intervalSeconds`. SQL: `seedRows` at start, then `insertsPerTick` per tick, up to `maxRows` |
+| `interval` (default) | One record every `intervalSeconds`. SQL: tops the table up to `seedRows` at start, then `insertsPerTick` per tick, up to `maxRows` |
 | `fillToLimit` | SQL only. Tops the table up to `maxRows` at start and writes nothing after |
 
 `fillToLimit` is the shape of master data — a tree cadastre exists whole, it does
-not grow by a row a minute. It counts before it writes, so a restart or a second
-registration finds the table full and adds nothing, where `seedRows` would be
-written again on every start.
+not grow by a row a minute. Both cadences count before they write, so a restart or
+a second registration adds only what the table lacks.
 
 ```json
 "scenario": { "cadence": "fillToLimit", "maxRows": 25, "table": { … }, "fields": { … } }

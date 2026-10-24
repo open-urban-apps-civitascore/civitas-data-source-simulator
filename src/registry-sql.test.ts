@@ -74,12 +74,14 @@ describe("Registry, SQL cadence", () => {
     await first.shutdown();
     const writesBefore = table.writes;
 
-    // Seeding would append another `seedRows` here; a fill only tops up.
+    // A fill counts before it writes, so a full table gets nothing more.
     const second = new Registry();
-    await second.put("kataster", sqlInput({ cadence: "fillToLimit", maxRows: 25 }));
+    const status = await second.put("kataster", sqlInput({ cadence: "fillToLimit", maxRows: 25 }));
 
     expect(table.rows).toHaveLength(25);
     expect(table.writes).toBe(writesBefore);
+    // Still reads as full.
+    expect(status).toMatchObject({ rowCount: 25, atCap: true });
     await second.shutdown();
   });
 
@@ -101,5 +103,29 @@ describe("Registry, SQL cadence", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(table.rows).toHaveLength(5);
     await registry.shutdown();
+  });
+
+  it("tops the table up to the starting rows instead of adding them again", async () => {
+    table.rows = [{ baum_id: "KB-001", art: "Winterlinde" }];
+    const registry = new Registry();
+    await registry.put("messungen", sqlInput({ seedRows: 3, maxRows: 100 }));
+
+    expect(table.rows.map((row) => row.baum_id)).toEqual(["KB-001", "KB-002", "KB-003"]);
+    await registry.shutdown();
+  });
+
+  it("writes no starting rows when a restart finds enough", async () => {
+    const first = new Registry();
+    await first.put("messungen", sqlInput({ seedRows: 3, maxRows: 100 }));
+    await first.shutdown();
+    const writesBefore = table.writes;
+
+    // Every restart used to append the starting rows again.
+    const second = new Registry();
+    await second.put("messungen", sqlInput({ seedRows: 3, maxRows: 100 }));
+
+    expect(table.rows).toHaveLength(3);
+    expect(table.writes).toBe(writesBefore);
+    await second.shutdown();
   });
 });
