@@ -72,7 +72,7 @@ export function assertClaims(claims: Record<string, unknown>, config: AuthConfig
 }
 
 /** Liveness answers before anyone is authenticated: probes carry no token. */
-const OPEN_PATHS = new Set(["/healthz"]);
+const OPEN_PATHS = new Set(["/healthz", "/readyz"]);
 
 export function createAuthMiddleware(
   config: AuthConfig | null,

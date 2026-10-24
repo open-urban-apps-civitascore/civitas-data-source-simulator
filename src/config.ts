@@ -27,3 +27,18 @@ export function resolveSqlDsn(): string {
   }
   return dsn;
 }
+
+export const STATE_DSN_VAR = "SIMULATOR_STATE_DSN";
+export const STATE_IN_MEMORY_VAR = "SIMULATOR_STATE_IN_MEMORY";
+
+export type StateConfig = { kind: "postgres"; dsn: string } | { kind: "memory" };
+
+/** Where the settings are kept. No default: keeping them in memory has to be asked for. */
+export function readStateConfig(env: Record<string, string | undefined> = process.env): StateConfig {
+  const dsn = env[STATE_DSN_VAR]?.trim();
+  if (dsn) return { kind: "postgres", dsn };
+  if (env[STATE_IN_MEMORY_VAR]?.trim() === "1") return { kind: "memory" };
+  throw new Error(
+    `No storage configured: set ${STATE_DSN_VAR} to a database, or ${STATE_IN_MEMORY_VAR}=1 to forget every simulation on restart.`,
+  );
+}

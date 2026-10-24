@@ -38,6 +38,9 @@ spec:
               value: {{ .Values.generator.service.port | quote }}
             - name: TZ
               value: {{ .Values.generator.timezone | quote }}
+            # Required storage setting: memory, until the chart provides a database.
+            - name: SIMULATOR_STATE_IN_MEMORY
+              value: "1"
             {{- if .Values.generator.auth.disabled }}
             # Emergency switch: no token is checked on any request.
             - name: SIMULATOR_AUTH_DISABLED
