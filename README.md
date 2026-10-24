@@ -226,7 +226,9 @@ with no lookup table, and a retry converges instead of starting a second publish
 
 **A replacement starts before the old version stops.** An edit that cannot start —
 its broker is down, say — leaves the previous version running and answers with the
-reason, instead of deleting the simulation.
+reason, instead of deleting the simulation. Changes to one simulation are applied one
+after another, so two overlapping saves cannot leave a publisher running that nothing
+tracks.
 
 **A unique MQTT client id per simulation.** NiFi's own consumer uses a fixed client id
 and its flows visibly kick each other off the broker with "session taken over". Two

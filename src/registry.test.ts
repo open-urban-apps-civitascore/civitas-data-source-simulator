@@ -74,6 +74,30 @@ describe("Registry.put", () => {
   });
 });
 
+describe("Registry, overlapping changes to one simulation", () => {
+  it("applies two saves one after the other", async () => {
+    const registry = new Registry();
+    // Both start before either has connected, like a double click.
+    await Promise.all([
+      registry.put("sim", input("tcp://broker-a:1883")),
+      registry.put("sim", input("tcp://broker-b:1883")),
+    ]);
+
+    // Without the queue the first publisher kept running untracked.
+    expect(openBrokers()).toEqual(["tcp://broker-b:1883"]);
+    expect(registry.getInput("sim")?.transport).toMatchObject({ url: "tcp://broker-b:1883" });
+    await registry.shutdown();
+  });
+
+  it("removes a simulation whose registration was still connecting", async () => {
+    const registry = new Registry();
+    await Promise.all([registry.put("sim", input("tcp://broker:1883")), registry.remove("sim")]);
+
+    expect(registry.list()).toHaveLength(0);
+    expect(openBrokers()).toEqual([]);
+  });
+});
+
 describe("Registry.setEnabled", () => {
   it("leaves the simulation paused, with the reason, when resuming fails", async () => {
     const registry = new Registry();

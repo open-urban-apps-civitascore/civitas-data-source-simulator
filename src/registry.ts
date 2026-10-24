@@ -71,6 +71,8 @@ export class SimulationLimitError extends Error {
 
 export class Registry {
   private readonly simulations = new Map<string, Simulation>();
+  /** The last queued change per simulation; see `queue`. */
+  private readonly pending = new Map<string, Promise<void>>();
   private readonly now: () => Date;
 
   constructor(now: () => Date = () => new Date()) {
@@ -82,44 +84,46 @@ export class Registry {
    * Create or replace. The new version starts before the old one stops, so a
    * failed edit keeps the old one running.
    */
-  async put(id: string, input: SimulationInput): Promise<SimulationStatus> {
-    const existing = this.simulations.get(id);
-    if (!existing && this.simulations.size >= MAX_SIMULATIONS) {
-      throw new SimulationLimitError(`Refusing more than ${MAX_SIMULATIONS} simulations.`);
-    }
-
-    const simulation: Simulation = {
-      id,
-      input,
-      createdAt: this.now(),
-      render: compileScenario(input.scenario),
-      publisher: null,
-      writer: null,
-      timer: null,
-      publishedCount: 0,
-      rowCount: null,
-      atCap: false,
-      lastPublishedAt: null,
-      lastPayload: null,
-      lastError: null,
-    };
-    // A new id takes its place under the cap before the first await.
-    if (!existing) this.simulations.set(id, simulation);
-
-    if (input.enabled) {
-      try {
-        await this.start(simulation);
-      } catch (error) {
-        // Release what the failed start opened.
-        await this.teardown(simulation);
-        if (!existing) this.simulations.delete(id);
-        throw error;
+  put(id: string, input: SimulationInput): Promise<SimulationStatus> {
+    return this.queue(id, async () => {
+      const existing = this.simulations.get(id);
+      if (!existing && this.simulations.size >= MAX_SIMULATIONS) {
+        throw new SimulationLimitError(`Refusing more than ${MAX_SIMULATIONS} simulations.`);
       }
-    }
 
-    this.simulations.set(id, simulation);
-    if (existing) await this.teardown(existing);
-    return toStatus(simulation);
+      const simulation: Simulation = {
+        id,
+        input,
+        createdAt: this.now(),
+        render: compileScenario(input.scenario),
+        publisher: null,
+        writer: null,
+        timer: null,
+        publishedCount: 0,
+        rowCount: null,
+        atCap: false,
+        lastPublishedAt: null,
+        lastPayload: null,
+        lastError: null,
+      };
+      // A new id takes its place under the cap before the first await.
+      if (!existing) this.simulations.set(id, simulation);
+
+      if (input.enabled) {
+        try {
+          await this.start(simulation);
+        } catch (error) {
+          // Release what the failed start opened.
+          await this.teardown(simulation);
+          if (!existing) this.simulations.delete(id);
+          throw error;
+        }
+      }
+
+      this.simulations.set(id, simulation);
+      if (existing) await this.teardown(existing);
+      return toStatus(simulation);
+    });
   }
 
   get(id: string): SimulationStatus | null {
@@ -137,12 +141,14 @@ export class Registry {
   }
 
   /** Stop and forget. Does not drop the table. */
-  async remove(id: string): Promise<boolean> {
-    const simulation = this.simulations.get(id);
-    if (!simulation) return false;
-    await this.teardown(simulation);
-    this.simulations.delete(id);
-    return true;
+  remove(id: string): Promise<boolean> {
+    return this.queue(id, async () => {
+      const simulation = this.simulations.get(id);
+      if (!simulation) return false;
+      await this.teardown(simulation);
+      this.simulations.delete(id);
+      return true;
+    });
   }
 
   /**
@@ -150,26 +156,28 @@ export class Registry {
    * simulation is marked enabled: a failed start leaves it paused with the
    * reason recorded, never marked active with nothing running behind it.
    */
-  async setEnabled(id: string, enabled: boolean): Promise<SimulationStatus | null> {
-    const simulation = this.simulations.get(id);
-    if (!simulation) return null;
-    if (enabled === simulation.input.enabled) return toStatus(simulation);
+  setEnabled(id: string, enabled: boolean): Promise<SimulationStatus | null> {
+    return this.queue(id, async () => {
+      const simulation = this.simulations.get(id);
+      if (!simulation) return null;
+      if (enabled === simulation.input.enabled) return toStatus(simulation);
 
-    if (!enabled) {
-      simulation.input = { ...simulation.input, enabled: false };
-      await this.teardown(simulation);
+      if (!enabled) {
+        simulation.input = { ...simulation.input, enabled: false };
+        await this.teardown(simulation);
+        return toStatus(simulation);
+      }
+
+      try {
+        await this.start(simulation);
+      } catch (error) {
+        await this.teardown(simulation);
+        simulation.lastError = errorText(error);
+        throw error;
+      }
+      simulation.input = { ...simulation.input, enabled: true };
       return toStatus(simulation);
-    }
-
-    try {
-      await this.start(simulation);
-    } catch (error) {
-      await this.teardown(simulation);
-      simulation.lastError = errorText(error);
-      throw error;
-    }
-    simulation.input = { ...simulation.input, enabled: true };
-    return toStatus(simulation);
+    });
   }
 
   /** Render without publishing. */
@@ -180,8 +188,28 @@ export class Registry {
   }
 
   async shutdown(): Promise<void> {
+    // Let changes in flight finish, or a late start would keep running.
+    await Promise.all(this.pending.values());
     await Promise.all([...this.simulations.values()].map((s) => this.teardown(s)));
     this.simulations.clear();
+  }
+
+  /**
+   * One change per simulation at a time, so overlapping saves cannot leave an
+   * untracked publisher behind. Different simulations change in parallel.
+   */
+  private queue<T>(id: string, change: () => Promise<T>): Promise<T> {
+    const result = (this.pending.get(id) ?? Promise.resolve()).then(change);
+    // The queue itself never rejects; each caller gets its own outcome.
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.pending.set(id, settled);
+    void settled.then(() => {
+      if (this.pending.get(id) === settled) this.pending.delete(id);
+    });
+    return result;
   }
 
   private async start(simulation: Simulation): Promise<void> {
