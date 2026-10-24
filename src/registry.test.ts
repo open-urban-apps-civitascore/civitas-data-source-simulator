@@ -64,6 +64,17 @@ describe("Registry.put", () => {
     await registry.shutdown();
   });
 
+  it("keeps the date it was first created when a simulation is replaced", async () => {
+    let clock = new Date("2026-10-01T08:00:00Z");
+    const registry = new Registry({ now: () => clock });
+    await registry.put("sim", input("tcp://broker-a:1883"));
+    clock = new Date("2026-10-02T08:00:00Z");
+    await registry.put("sim", input("tcp://broker-b:1883"));
+
+    expect(registry.get("sim")?.createdAt).toBe("2026-10-01T08:00:00.000Z");
+    await registry.shutdown();
+  });
+
   it("stops the old version once the new one runs", async () => {
     const registry = new Registry();
     await registry.put("sim", input("tcp://broker-a:1883"));

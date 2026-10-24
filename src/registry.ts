@@ -103,7 +103,7 @@ export class Registry {
       const simulation: Simulation = {
         id,
         input,
-        createdAt: this.now(),
+        createdAt: existing?.createdAt ?? this.now(),
         render: compileScenario(input.scenario),
         publisher: null,
         writer: null,
