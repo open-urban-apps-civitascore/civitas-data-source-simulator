@@ -1,14 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+
+// Publishers handed out, to see which are still open.
+const publishers = vi.hoisted(() => [] as { url: string; close: Mock }[]);
 
 vi.mock("./publisher.js", () => ({
   createPublisher: vi.fn(async ({ url }: { url: string }) => {
     if (url.includes("unreachable")) throw new Error("read ECONNRESET");
-    return { publish: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+    const publisher = { url, publish: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+    publishers.push(publisher);
+    return publisher;
   }),
 }));
 
 import { Registry } from "./registry.js";
 import type { SimulationInput } from "./types.js";
+
+beforeEach(() => {
+  publishers.length = 0;
+});
+
+function openBrokers(): string[] {
+  return publishers.filter((publisher) => publisher.close.mock.calls.length === 0).map((publisher) => publisher.url);
+}
 
 function input(url: string, enabled = true): SimulationInput {
   return {
@@ -34,6 +47,29 @@ describe("Registry.put", () => {
     const registry = new Registry();
     await registry.put("sim-ok", input("tcp://broker:1883"));
     expect(registry.list().map((simulation) => simulation.id)).toEqual(["sim-ok"]);
+    await registry.shutdown();
+  });
+
+  it("keeps the old version running when the new one cannot start", async () => {
+    const registry = new Registry();
+    await registry.put("sim", input("tcp://broker:1883"));
+
+    // This used to stop the old version first and lose both.
+    await expect(registry.put("sim", input("tcp://unreachable:1883"))).rejects.toThrow("read ECONNRESET");
+
+    expect(registry.getInput("sim")?.transport).toMatchObject({ url: "tcp://broker:1883" });
+    expect(registry.get("sim")?.enabled).toBe(true);
+    expect(openBrokers()).toEqual(["tcp://broker:1883"]);
+    await registry.shutdown();
+  });
+
+  it("stops the old version once the new one runs", async () => {
+    const registry = new Registry();
+    await registry.put("sim", input("tcp://broker-a:1883"));
+    await registry.put("sim", input("tcp://broker-b:1883"));
+
+    expect(registry.getInput("sim")?.transport).toMatchObject({ url: "tcp://broker-b:1883" });
+    expect(openBrokers()).toEqual(["tcp://broker-b:1883"]);
     await registry.shutdown();
   });
 });

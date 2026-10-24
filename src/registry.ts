@@ -78,12 +78,15 @@ export class Registry {
   }
 
 
+  /**
+   * Create or replace. The new version starts before the old one stops, so a
+   * failed edit keeps the old one running.
+   */
   async put(id: string, input: SimulationInput): Promise<SimulationStatus> {
     const existing = this.simulations.get(id);
     if (!existing && this.simulations.size >= MAX_SIMULATIONS) {
       throw new SimulationLimitError(`Refusing more than ${MAX_SIMULATIONS} simulations.`);
     }
-    if (existing) await this.teardown(existing);
 
     const simulation: Simulation = {
       id,
@@ -100,17 +103,22 @@ export class Registry {
       lastPayload: null,
       lastError: null,
     };
-    this.simulations.set(id, simulation);
+    // A new id takes its place under the cap before the first await.
+    if (!existing) this.simulations.set(id, simulation);
 
     if (input.enabled) {
       try {
         await this.start(simulation);
       } catch (error) {
-        // Report an unreachable target instead of registering a silent simulation.
-        this.simulations.delete(id);
+        // Release what the failed start opened.
+        await this.teardown(simulation);
+        if (!existing) this.simulations.delete(id);
         throw error;
       }
     }
+
+    this.simulations.set(id, simulation);
+    if (existing) await this.teardown(existing);
     return toStatus(simulation);
   }
 

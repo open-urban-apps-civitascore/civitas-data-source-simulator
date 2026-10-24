@@ -224,6 +224,10 @@ marketplace re-registers.
 **`PUT` with a caller-supplied id.** Uninstall can `DELETE /simulations/{datasetId}`
 with no lookup table, and a retry converges instead of starting a second publisher.
 
+**A replacement starts before the old version stops.** An edit that cannot start —
+its broker is down, say — leaves the previous version running and answers with the
+reason, instead of deleting the simulation.
+
 **A unique MQTT client id per simulation.** NiFi's own consumer uses a fixed client id
 and its flows visibly kick each other off the broker with "session taken over". Two
 publishers sharing an id would do the same, and the symptom — messages silently
