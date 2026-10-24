@@ -16,7 +16,7 @@ const COLUMN_DDL: Record<ColumnType, string> = {
 };
 
 /** Column names are validated at registration, but a scenario still reaches DDL. */
-function quoteIdent(name: string): string {
+export function quoteIdent(name: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name)) {
     throw new Error(`Unsafe SQL identifier: '${name}'`);
   }
