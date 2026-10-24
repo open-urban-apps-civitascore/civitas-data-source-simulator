@@ -13,6 +13,7 @@ vi.mock("./publisher.js", () => ({
 }));
 
 import { Registry } from "./registry.js";
+import { MemoryStore, type SimulationStore, type StoredSimulation } from "./store.js";
 import type { SimulationInput } from "./types.js";
 
 beforeEach(() => {
@@ -149,6 +150,133 @@ describe("Registry status", () => {
     const registry = new Registry();
     await registry.put("handmade", input("tcp://broker:1883"));
     expect(registry.get("handmade")?.origin).toBeNull();
+    await registry.shutdown();
+  });
+});
+
+/** Refuses every write while `broken` is set. */
+class BrokenStore extends MemoryStore {
+  broken = false;
+
+  override async save(simulation: StoredSimulation): Promise<void> {
+    if (this.broken) throw new Error("store unavailable");
+    await super.save(simulation);
+  }
+
+  override async remove(id: string): Promise<void> {
+    if (this.broken) throw new Error("store unavailable");
+    await super.remove(id);
+  }
+}
+
+/** On or off per stored id. */
+async function storedSwitches(store: SimulationStore): Promise<Record<string, boolean>> {
+  return Object.fromEntries((await store.list()).map((simulation) => [simulation.id, simulation.input.enabled]));
+}
+
+describe("Registry, stored settings", () => {
+  it("stores every change: registered, switched off and on, removed", async () => {
+    const store = new MemoryStore();
+    const registry = new Registry({ store });
+
+    await registry.put("sim", input("tcp://broker:1883"));
+    expect(await storedSwitches(store)).toEqual({ sim: true });
+    await registry.setEnabled("sim", false);
+    expect(await storedSwitches(store)).toEqual({ sim: false });
+    await registry.setEnabled("sim", true);
+    expect(await storedSwitches(store)).toEqual({ sim: true });
+    await registry.remove("sim");
+    expect(await storedSwitches(store)).toEqual({});
+    await registry.shutdown();
+  });
+
+  it("leaves the store alone on shutdown, since stopping the service switches nothing off", async () => {
+    const store = new MemoryStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker:1883"));
+
+    await registry.shutdown();
+
+    expect(await storedSwitches(store)).toEqual({ sim: true });
+  });
+
+  it("stores nothing that could not start", async () => {
+    const store = new MemoryStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker:1883"));
+    await registry.put("paused", input("tcp://unreachable:1883", false));
+
+    await expect(registry.put("sim", input("tcp://unreachable:1883"))).rejects.toThrow("read ECONNRESET");
+    await expect(registry.put("new", input("tcp://unreachable:1883"))).rejects.toThrow("read ECONNRESET");
+    await expect(registry.setEnabled("paused", true)).rejects.toThrow("read ECONNRESET");
+
+    expect(await storedSwitches(store)).toEqual({ sim: true, paused: false });
+    const sim = (await store.list()).find((simulation) => simulation.id === "sim");
+    expect(sim?.input.transport).toMatchObject({ url: "tcp://broker:1883" });
+    await registry.shutdown();
+  });
+
+  it("does not register a simulation it cannot store", async () => {
+    const store = new BrokenStore();
+    store.broken = true;
+    const registry = new Registry({ store });
+
+    await expect(registry.put("sim", input("tcp://broker:1883"))).rejects.toThrow("store unavailable");
+
+    expect(registry.list()).toHaveLength(0);
+    expect(openBrokers()).toEqual([]);
+  });
+
+  it("keeps the old version when the new one cannot be stored", async () => {
+    const store = new BrokenStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker-a:1883"));
+    store.broken = true;
+
+    await expect(registry.put("sim", input("tcp://broker-b:1883"))).rejects.toThrow("store unavailable");
+
+    expect(registry.getInput("sim")?.transport).toMatchObject({ url: "tcp://broker-a:1883" });
+    expect(openBrokers()).toEqual(["tcp://broker-a:1883"]);
+    const [kept] = await store.list();
+    expect(kept?.input.transport).toMatchObject({ url: "tcp://broker-a:1883" });
+    await registry.shutdown();
+  });
+
+  it("stays off, with the reason, when switching on cannot be stored", async () => {
+    const store = new BrokenStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker:1883", false));
+    store.broken = true;
+
+    await expect(registry.setEnabled("sim", true)).rejects.toThrow("store unavailable");
+
+    expect(registry.get("sim")).toMatchObject({ enabled: false, lastError: "store unavailable" });
+    expect(openBrokers()).toEqual([]);
+  });
+
+  it("keeps running when switching off cannot be stored", async () => {
+    const store = new BrokenStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker:1883"));
+    store.broken = true;
+
+    await expect(registry.setEnabled("sim", false)).rejects.toThrow("store unavailable");
+
+    expect(registry.get("sim")?.enabled).toBe(true);
+    expect(openBrokers()).toEqual(["tcp://broker:1883"]);
+    await registry.shutdown();
+  });
+
+  it("keeps a simulation running when the store refuses to forget it", async () => {
+    const store = new BrokenStore();
+    const registry = new Registry({ store });
+    await registry.put("sim", input("tcp://broker:1883"));
+    store.broken = true;
+
+    await expect(registry.remove("sim")).rejects.toThrow("store unavailable");
+
+    expect(registry.list()).toHaveLength(1);
+    expect(openBrokers()).toEqual(["tcp://broker:1883"]);
     await registry.shutdown();
   });
 });

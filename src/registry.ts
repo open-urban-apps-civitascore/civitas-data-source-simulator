@@ -4,10 +4,11 @@ import { compileScenario } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
 import { resolveTable } from "./row-schema.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
+import { MemoryStore, type SimulationStore } from "./store.js";
 import type { Cadence, Origin, SimulationInput } from "./types.js";
 
-// In memory only: the marketplace holds the install records, and a second copy
-// would eventually disagree. SQL sequence counters are read back from the table.
+// Settings go through the store; live state stays here. SQL sequence counters
+// are read back from the table.
 
 export interface SimulationStatus {
   id: string;
@@ -69,13 +70,21 @@ export class SimulationLimitError extends Error {
   readonly status = 429;
 }
 
+export interface RegistryOptions {
+  /** Defaults to memory. */
+  store?: SimulationStore;
+  now?: () => Date;
+}
+
 export class Registry {
   private readonly simulations = new Map<string, Simulation>();
   /** The last queued change per simulation; see `queue`. */
   private readonly pending = new Map<string, Promise<void>>();
+  private readonly store: SimulationStore;
   private readonly now: () => Date;
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor({ store = new MemoryStore(), now = () => new Date() }: RegistryOptions = {}) {
+    this.store = store;
     this.now = now;
   }
 
@@ -109,15 +118,15 @@ export class Registry {
       // A new id takes its place under the cap before the first await.
       if (!existing) this.simulations.set(id, simulation);
 
-      if (input.enabled) {
-        try {
-          await this.start(simulation);
-        } catch (error) {
-          // Release what the failed start opened.
-          await this.teardown(simulation);
-          if (!existing) this.simulations.delete(id);
-          throw error;
-        }
+      try {
+        if (input.enabled) await this.start(simulation);
+        // Stored once it runs, so a version that cannot start is never kept.
+        await this.store.save({ id, input, createdAt: simulation.createdAt });
+      } catch (error) {
+        // Release what the failed start opened.
+        await this.teardown(simulation);
+        if (!existing) this.simulations.delete(id);
+        throw error;
       }
 
       this.simulations.set(id, simulation);
@@ -145,6 +154,8 @@ export class Registry {
     return this.queue(id, async () => {
       const simulation = this.simulations.get(id);
       if (!simulation) return false;
+      // Store first: a refused delete leaves it running.
+      await this.store.remove(id);
       await this.teardown(simulation);
       this.simulations.delete(id);
       return true;
@@ -154,7 +165,8 @@ export class Registry {
   /**
    * Pause or resume without losing the scenario. Resuming connects BEFORE the
    * simulation is marked enabled: a failed start leaves it paused with the
-   * reason recorded, never marked active with nothing running behind it.
+   * reason recorded, never marked active with nothing running behind it. A
+   * failed save leaves it as it was.
    */
   setEnabled(id: string, enabled: boolean): Promise<SimulationStatus | null> {
     return this.queue(id, async () => {
@@ -162,20 +174,23 @@ export class Registry {
       if (!simulation) return null;
       if (enabled === simulation.input.enabled) return toStatus(simulation);
 
+      const input = { ...simulation.input, enabled };
       if (!enabled) {
-        simulation.input = { ...simulation.input, enabled: false };
+        await this.store.save({ id, input, createdAt: simulation.createdAt });
+        simulation.input = input;
         await this.teardown(simulation);
         return toStatus(simulation);
       }
 
       try {
         await this.start(simulation);
+        await this.store.save({ id, input, createdAt: simulation.createdAt });
       } catch (error) {
         await this.teardown(simulation);
         simulation.lastError = errorText(error);
         throw error;
       }
-      simulation.input = { ...simulation.input, enabled: true };
+      simulation.input = input;
       return toStatus(simulation);
     });
   }
@@ -187,6 +202,7 @@ export class Registry {
     return renderSample(simulation.render, count, simulation.input.scenario.intervalSeconds, this.now());
   }
 
+  /** Leaves the store alone: stopping the service switches nothing off. */
   async shutdown(): Promise<void> {
     // Let changes in flight finish, or a late start would keep running.
     await Promise.all(this.pending.values());
