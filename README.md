@@ -78,6 +78,27 @@ it, every SQL simulation is refused with a message saying so.
 An operator with a database of their own deletes the shipped one and points
 `DEMO_DB_DSN` somewhere else. Nothing else changes.
 
+## Where the settings are kept
+
+Each simulation's settings — what to generate, where to, how often, on or off —
+are stored, and a restart resumes them. Live numbers (counters, the last
+message) start fresh.
+
+The service refuses to start until it is told where. `SIMULATOR_STATE_DSN` names
+a Postgres database; the settings get a schema of their own (`simulator`), created
+and migrated on start, so the compose database does locally (see `.env.example`).
+`SIMULATOR_STATE_IN_MEMORY=1` keeps them in memory instead, and a restart forgets
+every simulation — that has to be said out loud, like switching off authentication.
+
+After a restart, a simulation that was on stays on even when its broker or
+database cannot be reached yet: it shows the reason and is tried again after 5 s,
+then twice as long each time, at most every 5 minutes, until it works or someone
+switches it off.
+
+No stored address may carry a username or password, since the settings are shown
+to everyone signed in: a broker address with them is refused, and the platform's
+read address is kept without them.
+
 ## The broker
 
 This repo ships a stock Mosquitto (`broker/mosquitto.conf` — configuration only, no
@@ -129,7 +150,8 @@ scenario field by field. It talks to the API below and to nothing else. See
 | `POST` | `/simulations/{id}/switch_on` · `/switch_off` | Pause and resume without losing the scenario |
 | `GET` | `/simulations/{id}/sample?count=5` | Render without publishing |
 | `POST` | `/sample` | Render an unregistered scenario — powers a catalogue preview |
-| `GET` | `/healthz` | Liveness |
+| `GET` | `/healthz` | Liveness: the process runs. Says whether it is ready and where settings are kept |
+| `GET` | `/readyz` | Readiness: 200 once the stored simulations are loaded, 503 until then |
 
 ### Registering a simulation
 
@@ -215,10 +237,10 @@ a second registration adds only what the table lacks.
 
 ## Design decisions
 
-**Stateless.** Simulations live in memory only. The marketplace already holds the
-install records, so persisting them here would be a second copy of the same truth, and
-two copies eventually disagree. After a restart this service is empty and the
-marketplace re-registers.
+**Settings are stored, live state is not.** Simulations built in the UI exist
+nowhere else, so their settings survive a restart. What the marketplace registers is
+stored the same way, and a registration from the marketplace replaces the stored
+version, edits made in the UI included. Counters, timers and connections start fresh.
 
 **`PUT` with a caller-supplied id.** Uninstall can `DELETE /simulations/{datasetId}`
 with no lookup table, and a retry converges instead of starting a second publisher.
