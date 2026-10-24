@@ -47,6 +47,8 @@ interface Simulation {
   publisher: Publisher | null;
   writer: SqlWriter | null;
   timer: NodeJS.Timeout | null;
+  /** Pending retry of a start that failed after a restart. */
+  retry: NodeJS.Timeout | null;
   publishedCount: number;
   rowCount: number | null;
   atCap: boolean;
@@ -65,6 +67,11 @@ interface StartedTransport {
 
 /** A demo tool must not be able to flood a municipal broker or database. */
 const MAX_SIMULATIONS = 50;
+
+/** 5 s, doubling, at most 5 min. */
+export function retryDelayMs(attempt: number): number {
+  return Math.min(5_000 * 2 ** attempt, 300_000);
+}
 
 export class SimulationLimitError extends Error {
   readonly status = 429;
@@ -88,6 +95,22 @@ export class Registry {
     this.now = now;
   }
 
+  /**
+   * Registers what the store holds. Those that were on start in the background;
+   * a failed start stays on and is retried until it works or is switched off.
+   */
+  async resume(): Promise<void> {
+    const stored = await this.store.list();
+    for (const { id, input, createdAt } of stored) {
+      if (this.simulations.has(id)) continue;
+      const simulation = newSimulation(id, input, createdAt);
+      this.simulations.set(id, simulation);
+      if (input.enabled) void this.queue(id, () => this.startOrRetry(simulation, 0));
+    }
+    const on = stored.filter((simulation) => simulation.input.enabled).length;
+    console.log(`[demo-generator] resumed ${stored.length} stored simulation(s), starting ${on}`);
+  }
+
 
   /**
    * Create or replace. The new version starts before the old one stops, so a
@@ -100,21 +123,7 @@ export class Registry {
         throw new SimulationLimitError(`Refusing more than ${MAX_SIMULATIONS} simulations.`);
       }
 
-      const simulation: Simulation = {
-        id,
-        input,
-        createdAt: existing?.createdAt ?? this.now(),
-        render: compileScenario(input.scenario),
-        publisher: null,
-        writer: null,
-        timer: null,
-        publishedCount: 0,
-        rowCount: null,
-        atCap: false,
-        lastPublishedAt: null,
-        lastPayload: null,
-        lastError: null,
-      };
+      const simulation = newSimulation(id, input, existing?.createdAt ?? this.now());
       // A new id takes its place under the cap before the first await.
       if (!existing) this.simulations.set(id, simulation);
 
@@ -226,6 +235,23 @@ export class Registry {
       if (this.pending.get(id) === settled) this.pending.delete(id);
     });
     return result;
+  }
+
+  /** Starts it, or records why not and tries again later. */
+  private async startOrRetry(simulation: Simulation, attempt: number): Promise<void> {
+    // Replaced, removed or switched off while it waited.
+    if (this.simulations.get(simulation.id) !== simulation || !simulation.input.enabled) return;
+    try {
+      await this.start(simulation);
+    } catch (error) {
+      await this.teardown(simulation);
+      const delay = retryDelayMs(attempt);
+      simulation.lastError = `${errorText(error)} Neuer Versuch in ${delay / 1000} s.`;
+      simulation.retry = setTimeout(() => {
+        simulation.retry = null;
+        void this.queue(simulation.id, () => this.startOrRetry(simulation, attempt + 1));
+      }, delay);
+    }
   }
 
   private async start(simulation: Simulation): Promise<void> {
@@ -350,6 +376,8 @@ export class Registry {
   private async teardown(simulation: Simulation): Promise<void> {
     if (simulation.timer) clearInterval(simulation.timer);
     simulation.timer = null;
+    if (simulation.retry) clearTimeout(simulation.retry);
+    simulation.retry = null;
     await simulation.publisher?.close().catch(() => undefined);
     simulation.publisher = null;
     await simulation.writer?.close().catch(() => undefined);
@@ -367,6 +395,25 @@ export function renderSample(
   return Array.from({ length: count }, (_, i) =>
     render(new Date(from.getTime() + i * intervalSeconds * 1000)),
   );
+}
+
+function newSimulation(id: string, input: SimulationInput, createdAt: Date): Simulation {
+  return {
+    id,
+    input,
+    createdAt,
+    render: compileScenario(input.scenario),
+    publisher: null,
+    writer: null,
+    timer: null,
+    retry: null,
+    publishedCount: 0,
+    rowCount: null,
+    atCap: false,
+    lastPublishedAt: null,
+    lastPayload: null,
+    lastError: null,
+  };
 }
 
 function toStatus(simulation: Simulation): SimulationStatus {

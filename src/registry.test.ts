@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 // Publishers handed out, to see which are still open.
 const publishers = vi.hoisted(() => [] as { url: string; close: Mock }[]);
+// A broker a test can take down and bring back.
+const flaky = vi.hoisted(() => ({ down: false }));
 
 vi.mock("./publisher.js", () => ({
   createPublisher: vi.fn(async ({ url }: { url: string }) => {
     if (url.includes("unreachable")) throw new Error("read ECONNRESET");
+    if (url.includes("flaky") && flaky.down) throw new Error("Broker nicht erreichbar.");
     const publisher = { url, publish: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     publishers.push(publisher);
     return publisher;
@@ -18,6 +21,7 @@ import type { SimulationInput } from "./types.js";
 
 beforeEach(() => {
   publishers.length = 0;
+  flaky.down = false;
 });
 
 function openBrokers(): string[] {
@@ -288,6 +292,81 @@ describe("Registry, stored settings", () => {
 
     expect(registry.list()).toHaveLength(1);
     expect(openBrokers()).toEqual(["tcp://broker:1883"]);
+    await registry.shutdown();
+  });
+});
+
+describe("Registry.resume", () => {
+  const createdAt = new Date("2026-10-01T08:00:00Z");
+  const stored = (id: string, url: string, enabled = true): StoredSimulation => ({
+    id,
+    input: input(url, enabled),
+    createdAt,
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts what was on, registers what was off, and keeps the created date", async () => {
+    const store = new MemoryStore();
+    await store.save(stored("on", "tcp://broker-a:1883"));
+    await store.save(stored("off", "tcp://broker-b:1883", false));
+    const registry = new Registry({ store });
+
+    await registry.resume();
+    await vi.waitFor(() => expect(openBrokers()).toEqual(["tcp://broker-a:1883"]));
+
+    expect(registry.list().map(({ id, enabled }) => ({ id, enabled }))).toEqual([
+      { id: "on", enabled: true },
+      { id: "off", enabled: false },
+    ]);
+    expect(registry.get("on")?.createdAt).toBe(createdAt.toISOString());
+    await registry.shutdown();
+  });
+
+  it("keeps a simulation on while its broker is down, and retries with growing pauses", async () => {
+    vi.useFakeTimers();
+    flaky.down = true;
+    const store = new MemoryStore();
+    await store.save(stored("sim", "tcp://flaky:1883"));
+    const registry = new Registry({ store });
+
+    await registry.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    // Stays on: an outage during a restart must not switch it off.
+    expect(registry.get("sim")).toMatchObject({
+      enabled: true,
+      lastError: "Broker nicht erreichbar. Neuer Versuch in 5 s.",
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(registry.get("sim")?.lastError).toContain("Neuer Versuch in 10 s.");
+
+    flaky.down = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(openBrokers()).toEqual(["tcp://flaky:1883"]);
+    expect(registry.get("sim")?.lastError).toBeNull();
+    expect(await storedSwitches(store)).toEqual({ sim: true });
+    await registry.shutdown();
+  });
+
+  it("stops retrying once someone switches the simulation off", async () => {
+    vi.useFakeTimers();
+    flaky.down = true;
+    const store = new MemoryStore();
+    await store.save(stored("sim", "tcp://flaky:1883"));
+    const registry = new Registry({ store });
+    await registry.resume();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await registry.setEnabled("sim", false);
+    flaky.down = false;
+    await vi.advanceTimersByTimeAsync(600_000);
+
+    expect(openBrokers()).toEqual([]);
+    expect(registry.get("sim")?.enabled).toBe(false);
+    expect(await storedSwitches(store)).toEqual({ sim: false });
     await registry.shutdown();
   });
 });
