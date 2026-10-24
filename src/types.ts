@@ -107,9 +107,20 @@ export function parseBrokerUrl(url: string): URL | null {
   return parsed && BROKER_SCHEMES.has(parsed.protocol) && parsed.hostname ? parsed : null;
 }
 
+// Stored settings are shown to everyone signed in: no passwords in addresses.
+export const BROKER_URL_WITH_CREDENTIALS =
+  "Die Broker-Adresse darf weder Benutzername noch Passwort enthalten - der Generator speichert sie und zeigt sie allen Angemeldeten.";
+
 export const mqttTransportSchema = z.object({
   kind: z.literal("mqtt").default("mqtt"),
-  url: z.string().trim().refine((url) => parseBrokerUrl(url) !== null, INVALID_BROKER_URL),
+  url: z
+    .string()
+    .trim()
+    .refine((url) => parseBrokerUrl(url) !== null, INVALID_BROKER_URL)
+    .refine((url) => {
+      const parsed = parseBrokerUrl(url);
+      return !parsed?.username && !parsed?.password;
+    }, BROKER_URL_WITH_CREDENTIALS),
   topic: z.string().min(1),
 });
 

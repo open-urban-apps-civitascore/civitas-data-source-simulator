@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { INVALID_BROKER_URL, mqttTransportSchema, simulationInputSchema } from "./types.js";
+import {
+  BROKER_URL_WITH_CREDENTIALS,
+  INVALID_BROKER_URL,
+  mqttTransportSchema,
+  simulationInputSchema,
+} from "./types.js";
 
 describe("scenario cadence", () => {
   const fields = { id: { kind: "sequence" }, wert: { kind: "constant", value: 1 } };
@@ -68,10 +73,18 @@ describe("mqttTransportSchema", () => {
   const parse = (url: string) => mqttTransportSchema.safeParse({ kind: "mqtt", url, topic: "t" });
 
   it("accepts the schemes mqtt.js speaks, trimmed", () => {
-    for (const url of ["mqtt://broker:1883", "tcp://broker", "mqtts://user:pw@broker:8883", "wss://broker/mqtt", "mqtt://[::1]:1883"]) {
+    for (const url of ["mqtt://broker:1883", "tcp://broker", "mqtts://broker:8883", "wss://broker/mqtt", "mqtt://[::1]:1883"]) {
       expect(parse(url).success, url).toBe(true);
     }
     expect(parse(" mqtt://broker:1883 ").data?.url).toBe("mqtt://broker:1883");
+  });
+
+  it("refuses a user or password in the address, since settings are stored and shown", () => {
+    for (const url of ["mqtts://user:pw@broker:8883", "mqtt://user@broker:1883"]) {
+      const result = parse(url);
+      expect(result.success, url).toBe(false);
+      expect(result.error?.issues[0]?.message).toBe(BROKER_URL_WITH_CREDENTIALS);
+    }
   });
 
   it("rejects what mqtt.js would misread, with a message for people", () => {
