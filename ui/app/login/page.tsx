@@ -4,12 +4,13 @@ import { redirect } from "next/navigation";
 import { auth, signIn } from "@/auth";
 import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
-import { authDisabled } from "@/lib/server/session";
+import { authDisabled, pageAfterLogin } from "@/lib/server/session";
 
-export default async function LoginPage() {
-  if (authDisabled()) redirect("/simulations");
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[] }> }) {
+  const target = pageAfterLogin((await searchParams).next);
+  if (authDisabled()) redirect(target);
   const session = await auth();
-  if (session?.user && !session.error) redirect("/simulations");
+  if (session?.user && !session.error) redirect(target);
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-muted px-4">
@@ -33,7 +34,7 @@ export default async function LoginPage() {
         <form
           action={async () => {
             "use server";
-            await signIn("keycloak", { redirectTo: "/simulations" });
+            await signIn("keycloak", { redirectTo: target });
           }}
         >
           <Button type="submit" className="w-full">

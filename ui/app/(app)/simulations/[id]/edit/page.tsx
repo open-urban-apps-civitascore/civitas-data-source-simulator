@@ -16,8 +16,8 @@ export default async function EditSimulationPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ mode?: string }>;
 }) {
-  await requireSession();
   const [{ id }, { mode }] = await Promise.all([params, searchParams]);
+  await requireSession(`/simulations/${encodeURIComponent(id)}/edit`);
   const simulation = await getSimulation(id).catch(() => null);
 
   if (!simulation?.input) {

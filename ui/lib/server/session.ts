@@ -19,11 +19,17 @@ export function authDisabled(): boolean {
  * on the client and do not re-render when navigating between routes that share
  * them, so a check placed there would not run again after the first load.
  */
-export async function requireSession() {
+export async function requireSession(next?: string) {
   if (authDisabled()) return null;
   const session = await auth();
-  if (!session || session.error) redirect("/login");
+  // `next`: the page to come back to, so a link into the simulator survives the sign-in.
+  if (!session || session.error) redirect(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
   return session;
+}
+
+/** Only a page of this app, never another site (`//host`, `/\\host`). */
+export function pageAfterLogin(next: string | string[] | undefined): string {
+  return typeof next === "string" && /^\/(?![\\/])/.test(next) ? next : "/simulations";
 }
 
 /** The signed-in user for display, or null. */

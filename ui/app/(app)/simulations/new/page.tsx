@@ -20,8 +20,11 @@ export default async function NewSimulationPage({
 }: {
   searchParams: Promise<{ from?: string; mode?: string; source?: string }>;
 }) {
-  await requireSession();
   const { from, mode, source } = await searchParams;
+  const query = new URLSearchParams(
+    Object.entries({ from, mode, source }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  await requireSession(`/simulations/new${query.size ? `?${query}` : ""}`);
   const [ds, brokerUrl, dataSource] = await Promise.all([
     findDataStructure(from),
     getDefaultBrokerUrl(),

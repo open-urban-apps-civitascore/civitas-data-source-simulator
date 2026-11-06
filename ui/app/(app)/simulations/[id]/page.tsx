@@ -15,8 +15,8 @@ export default async function SimulationPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
-  await requireSession();
   const [{ id }, { view }] = await Promise.all([params, searchParams]);
+  await requireSession(`/simulations/${encodeURIComponent(id)}`);
   const simulation = await getSimulation(id).catch(() => null);
 
   if (!simulation) {
