@@ -9,7 +9,6 @@ import { Registry, SimulationLimitError, renderSample, retryDelayMs } from "./re
 import { MemoryStore, PostgresStore } from "./store.js";
 import { scenarioSchema, simulationInputSchema } from "./types.js";
 
-// Control plane: REST in (what to generate), MQTT or SQL out (the data).
 
 // Refuses to start without a storage setting, like the issuer check below.
 const stateConfig = readStateConfig();
@@ -135,6 +134,15 @@ app.get("/simulations/:id/sample", (req, res) => {
     return;
   }
   res.json({ records });
+});
+
+app.get("/data/:id", (req, res) => {
+  const records = registry.records(req.params.id);
+  if (!records) {
+    res.status(404).json({ error: "Keine REST-Simulation mit dieser ID." });
+    return;
+  }
+  res.set({ "Cache-Control": "no-store", "X-Simuliert": "true" }).json(records);
 });
 
 /** Render an unregistered scenario, for a preview before anything is installed. */

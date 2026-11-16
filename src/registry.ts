@@ -1,14 +1,15 @@
 import { resolveSqlDsn } from "./config.js";
 import { errorText } from "./connect-error.js";
-import { compileScenario } from "./generators.js";
+import { compileScenario, renderBatch, sequenceFields } from "./generators.js";
 import { createPublisher, type Publisher } from "./publisher.js";
 import { resolveTable } from "./row-schema.js";
+import { MemoryRows, type RowSink } from "./rows.js";
 import { assertSameDatabase, createSqlWriter, type SqlWriter } from "./sql-writer.js";
 import { MemoryStore, type SimulationStore } from "./store.js";
-import type { Cadence, Origin, SimulationInput } from "./types.js";
+import { dataPathFor, type Cadence, type Origin, type SimulationInput, type WriteMode } from "./types.js";
 
-// Settings go through the store; live state stays here. SQL sequence counters
-// are read back from the table.
+// Settings go through the store; live state stays here. Sequence counters are
+// read back from the rows.
 
 export interface SimulationStatus {
   id: string;
@@ -18,21 +19,23 @@ export interface SimulationStatus {
   /** What the simulation belongs to on the platform; null when registered by hand. */
   origin: Origin | null;
   enabled: boolean;
-  transport: "mqtt" | "sql";
+  transport: "mqtt" | "sql" | "rest";
   /** MQTT only. */
   topic: string | null;
-  /** Broker URL, or the table for SQL. */
+  /** Broker URL, the table for SQL, the data path for REST. */
   target: string;
   intervalSeconds: number;
   /** `fillToLimit` writes once at start; `intervalSeconds` then means nothing. */
   cadence: Cadence;
+  /** SQL and REST. */
+  writeMode: WriteMode;
   createdAt: string;
-  /** Messages published (MQTT) or rows written (SQL). */
+  /** Messages published (MQTT) or rows written (SQL, REST). */
   publishedCount: number;
-  /** SQL only. */
+  /** SQL and REST. */
   rowCount: number | null;
   maxRows: number | null;
-  /** SQL only: the table is full, so ticks write nothing. Not an error. */
+  /** SQL and REST: the rows are full, so ticks write nothing. Not an error. */
   atCap: boolean;
   lastPublishedAt: string | null;
   lastPayload: Record<string, unknown> | null;
@@ -46,6 +49,8 @@ interface Simulation {
   render: (now: Date) => Record<string, unknown>;
   publisher: Publisher | null;
   writer: SqlWriter | null;
+  /** REST only. Survives a pause and an edit, as a table does. */
+  rows: MemoryRows | null;
   timer: NodeJS.Timeout | null;
   /** Pending retry of a start that failed after a restart. */
   retry: NodeJS.Timeout | null;
@@ -123,7 +128,9 @@ export class Registry {
         throw new SimulationLimitError(`Refusing more than ${MAX_SIMULATIONS} simulations.`);
       }
 
-      const simulation = newSimulation(id, input, existing?.createdAt ?? this.now());
+      // An edited REST simulation keeps its list, as a SQL one keeps its table.
+      const rows = existing?.input.transport.kind === "rest" && input.transport.kind === "rest" ? existing.rows : null;
+      const simulation = newSimulation(id, input, existing?.createdAt ?? this.now(), rows);
       // A new id takes its place under the cap before the first await.
       if (!existing) this.simulations.set(id, simulation);
 
@@ -156,6 +163,12 @@ export class Registry {
 
   list(): SimulationStatus[] {
     return [...this.simulations.values()].map(toStatus);
+  }
+
+  records(id: string): readonly Record<string, unknown>[] | null {
+    const simulation = this.simulations.get(id);
+    if (simulation?.input.transport.kind !== "rest") return null;
+    return simulation.rows?.list() ?? [];
   }
 
   /** Stop and forget. Does not drop the table. */
@@ -255,16 +268,29 @@ export class Registry {
   }
 
   private async start(simulation: Simulation): Promise<void> {
+    const kind = simulation.input.transport.kind;
     const { tick, fireImmediately, repeats } =
-      simulation.input.transport.kind === "sql"
+      kind === "sql"
         ? await this.startSql(simulation)
-        : await this.startMqtt(simulation);
+        : kind === "rest"
+          ? await this.startRest(simulation)
+          : await this.startMqtt(simulation);
 
     simulation.lastError = null;
     if (!repeats) return;
+    let busy = false;
+    const guarded = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        await tick();
+      } finally {
+        busy = false;
+      }
+    };
     // SQL has already seeded; an immediate tick would write `seedRows + 1`.
-    if (fireImmediately) void tick();
-    simulation.timer = setInterval(tick, simulation.input.scenario.intervalSeconds * 1000);
+    if (fireImmediately) void guarded();
+    simulation.timer = setInterval(guarded, simulation.input.scenario.intervalSeconds * 1000);
   }
 
   private async startMqtt(simulation: Simulation): Promise<StartedTransport> {
@@ -294,13 +320,9 @@ export class Registry {
   private async startSql(simulation: Simulation): Promise<StartedTransport> {
     const transport = simulation.input.transport;
     if (transport.kind !== "sql") throw new Error("not a sql transport");
-    const scenario = simulation.input.scenario;
-    const spec = scenario.table;
+    const spec = simulation.input.scenario.table;
     // Guaranteed by the schema refinement; asserted for the types.
-    if (!spec || scenario.maxRows === undefined) {
-      throw new Error("A SQL simulation needs a table description and maxRows.");
-    }
-    const maxRows = scenario.maxRows;
+    if (!spec) throw new Error("A SQL simulation needs a table description.");
 
     const dsn = resolveSqlDsn();
     assertSameDatabase(dsn, transport.readDsn);
@@ -308,17 +330,60 @@ export class Registry {
     const resolved = resolveTable(spec);
     const writer = await createSqlWriter({ dsn, table: transport.table, spec: resolved });
     simulation.writer = writer;
-    await writer.ensureTable();
+    try {
+      await writer.ensureTable();
+      return await this.startRows(simulation, writer, resolved.primaryKey);
+    } catch (error) {
+      // Fatal: seeding fails when the table is wrong, not on a blip.
+      await writer.close().catch(() => undefined);
+      simulation.writer = null;
+      throw error;
+    }
+  }
+
+  /** The list lives in memory; its first running number counts as the key. */
+  private startRest(simulation: Simulation): Promise<StartedTransport> {
+    simulation.rows ??= new MemoryRows();
+    const key = sequenceFields(simulation.input.scenario)[0]?.[0] ?? null;
+    return this.startRows(simulation, simulation.rows, key);
+  }
+
+  /** SQL and REST: write the first rows now, so the map is never empty. */
+  private async startRows(simulation: Simulation, sink: RowSink, keyField: string | null): Promise<StartedTransport> {
+    const scenario = simulation.input.scenario;
+    if (scenario.maxRows === undefined) throw new Error("A simulation with rows needs maxRows.");
+    const maxRows = scenario.maxRows;
+    const sequences = sequenceFields(scenario);
 
     // Read counters back before compiling, or a restart collides with every row.
     const resume: Record<string, number> = {};
-    for (const [field, generator] of Object.entries(scenario.fields)) {
-      if (generator.kind !== "sequence") continue;
-      const highest = await writer.maxSequence(field, generator.prefix);
+    for (const [field, generator] of sequences) {
+      const highest = await sink.maxSequence(field, generator.prefix);
       if (highest !== null) resume[field] = highest + 1;
     }
     simulation.render = compileScenario(scenario, resume);
-    const rowsAtStart = await writer.countRows();
+
+    if (scenario.writeMode === "replace") {
+      const key = sequences.find(([field]) => field === keyField) ?? null;
+      simulation.atCap = false;
+      const replace = async () => {
+        const rows = renderBatch(simulation.render, key, maxRows, this.now());
+        const written = await sink.replace(rows, key?.[1].prefix);
+        simulation.rowCount = written;
+        this.recordSuccess(simulation, written, rows.at(-1) ?? null);
+      };
+      await replace();
+      const tick = async () => {
+        try {
+          await replace();
+        } catch (error) {
+          this.recordFailure(simulation, error);
+        }
+      };
+      return { tick, fireImmediately: false, repeats: true };
+    }
+
+    const rowsAtStart = await sink.countRows();
     simulation.rowCount = rowsAtStart;
     simulation.atCap = rowsAtStart >= maxRows;
 
@@ -327,26 +392,15 @@ export class Registry {
       simulation.atCap = room === 0;
       const rows = Array.from({ length: Math.min(count, room) }, () => simulation.render(this.now()));
       if (rows.length === 0) return;
-      const written = await writer.write(rows);
-      simulation.rowCount = await writer.countRows();
+      const written = await sink.write(rows);
+      simulation.rowCount = await sink.countRows();
       simulation.atCap = simulation.rowCount >= maxRows;
       this.recordSuccess(simulation, written, rows.at(-1) ?? null);
     };
 
-    // Seed now, so the map is never empty. Top up rather than append, so a
-    // restart writes only what the table lacks.
     const fill = scenario.cadence === "fillToLimit";
     const initialRows = Math.max(0, (fill ? maxRows : scenario.seedRows) - rowsAtStart);
-    if (initialRows > 0) {
-      try {
-        await writeRows(initialRows);
-      } catch (error) {
-        // Fatal: seeding fails when the table is wrong, not on a blip.
-        await writer.close().catch(() => undefined);
-        simulation.writer = null;
-        throw error;
-      }
-    }
+    if (initialRows > 0) await writeRows(initialRows);
 
     const tick = async () => {
       try {
@@ -397,7 +451,7 @@ export function renderSample(
   );
 }
 
-function newSimulation(id: string, input: SimulationInput, createdAt: Date): Simulation {
+function newSimulation(id: string, input: SimulationInput, createdAt: Date, rows: MemoryRows | null = null): Simulation {
   return {
     id,
     input,
@@ -405,6 +459,7 @@ function newSimulation(id: string, input: SimulationInput, createdAt: Date): Sim
     render: compileScenario(input.scenario),
     publisher: null,
     writer: null,
+    rows,
     timer: null,
     retry: null,
     publishedCount: 0,
@@ -426,9 +481,11 @@ function toStatus(simulation: Simulation): SimulationStatus {
     enabled: simulation.input.enabled,
     transport: transport.kind,
     topic: transport.kind === "mqtt" ? transport.topic : null,
-    target: transport.kind === "mqtt" ? transport.url : transport.table,
+    target:
+      transport.kind === "mqtt" ? transport.url : transport.kind === "sql" ? transport.table : dataPathFor(simulation.id),
     intervalSeconds: simulation.input.scenario.intervalSeconds,
     cadence: simulation.input.scenario.cadence,
+    writeMode: simulation.input.scenario.writeMode,
     createdAt: simulation.createdAt.toISOString(),
     publishedCount: simulation.publishedCount,
     rowCount: simulation.rowCount,

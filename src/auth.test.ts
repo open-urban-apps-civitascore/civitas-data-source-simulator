@@ -54,7 +54,12 @@ describe("assertClaims", () => {
 });
 
 /** Minimal Express stand-ins, so the middleware can be exercised directly. */
-function call(middleware: ReturnType<typeof createAuthMiddleware>, authorization?: string, path = "/simulations") {
+function call(
+  middleware: ReturnType<typeof createAuthMiddleware>,
+  authorization?: string,
+  path = "/simulations",
+  method = "GET",
+) {
   return new Promise<{ status: number; body: unknown; passed: boolean }>((resolve) => {
     let status = 200;
     const res = {
@@ -66,7 +71,7 @@ function call(middleware: ReturnType<typeof createAuthMiddleware>, authorization
         resolve({ status, body, passed: false });
       },
     };
-    const req = { path, header: () => authorization };
+    const req = { path, method, header: () => authorization };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     void middleware(req as any, res as any, () => resolve({ status: 200, body: null, passed: true }));
   });
@@ -82,6 +87,16 @@ describe("createAuthMiddleware", () => {
       throw new Error("should not be consulted");
     });
     expect((await call(middleware, undefined, "/healthz")).passed).toBe(true);
+  });
+
+  it("lets the platform fetch REST rows without a token, and only fetch", async () => {
+    const middleware = createAuthMiddleware({ issuer: ISSUER }, async () => {
+      throw new Error("should not be consulted");
+    });
+    expect((await call(middleware, undefined, "/data/baeume")).passed).toBe(true);
+    expect((await call(middleware, undefined, "/data/baeume", "HEAD")).passed).toBe(true);
+    expect((await call(middleware, undefined, "/data/baeume", "DELETE")).status).toBe(401);
+    expect((await call(middleware, undefined, "/database")).status).toBe(401);
   });
 
   it("refuses a request with no token", async () => {

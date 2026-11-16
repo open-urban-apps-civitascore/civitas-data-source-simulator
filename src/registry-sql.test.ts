@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // One in-memory table shared by every writer, so a second registration sees
 // the rows the first one wrote — exactly what a restart against Postgres sees.
-const table = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], writes: 0 }));
+const table = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  writes: 0,
+  /** Replaces begun, and a gate a test can hold them at. */
+  replacing: 0,
+  hold: null as Promise<void> | null,
+  prefixes: [] as (string | undefined)[],
+}));
 
 vi.mock("./sql-writer.js", () => ({
   assertSameDatabase: vi.fn(),
@@ -19,6 +26,14 @@ vi.mock("./sql-writer.js", () => ({
     write: vi.fn(async (rows: Record<string, unknown>[]) => {
       table.writes += 1;
       table.rows.push(...rows);
+      return rows.length;
+    }),
+    replace: vi.fn(async (rows: Record<string, unknown>[], keyPrefix?: string) => {
+      table.replacing += 1;
+      table.prefixes.push(keyPrefix);
+      if (table.hold) await table.hold;
+      table.writes += 1;
+      table.rows = [...rows];
       return rows.length;
     }),
     close: vi.fn(async () => undefined),
@@ -51,6 +66,9 @@ describe("Registry, SQL cadence", () => {
   beforeEach(() => {
     table.rows = [];
     table.writes = 0;
+    table.replacing = 0;
+    table.hold = null;
+    table.prefixes = [];
     vi.useFakeTimers();
   });
 
@@ -115,6 +133,67 @@ describe("Registry, SQL cadence", () => {
     await registry.put("messungen", sqlInput({ seedRows: 3, maxRows: 100 }));
 
     expect(table.rows.map((row) => row.baum_id)).toEqual(["KB-001", "KB-002", "KB-003"]);
+    await registry.shutdown();
+  });
+
+  it("replaces the whole table every tick, with the same keys each time", async () => {
+    table.rows = [{ baum_id: "KB-900", art: "Eiche" }];
+    const registry = new Registry();
+    const status = await registry.put("baeume", sqlInput({ writeMode: "replace", maxRows: 3, seedRows: 50 }));
+
+    // The leftover row is gone; the table holds one full batch.
+    expect(table.rows.map((row) => row.baum_id)).toEqual(["KB-001", "KB-002", "KB-003"]);
+    expect(status).toMatchObject({ writeMode: "replace", rowCount: 3, atCap: false });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(table.rows.map((row) => row.baum_id)).toEqual(["KB-001", "KB-002", "KB-003"]);
+    expect(table.writes).toBe(3);
+    // Only its own key series is replaced; another simulation may share the table.
+    expect(table.prefixes).toEqual(["KB-", "KB-", "KB-"]);
+    await registry.shutdown();
+  });
+
+  it("restarts only the key in each batch; another running number keeps counting", async () => {
+    const registry = new Registry();
+    await registry.put(
+      "baeume",
+      simulationInputSchema.parse({
+        transport: { kind: "sql", table: "kataster.baeume" },
+        scenario: {
+          intervalSeconds: 10,
+          writeMode: "replace",
+          maxRows: 2,
+          table: { columns: { baum_id: "text", messung: "text" }, primaryKey: "baum_id" },
+          fields: {
+            baum_id: { kind: "sequence", prefix: "KB-", padTo: 3 },
+            messung: { kind: "sequence", prefix: "M" },
+          },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(table.rows).toEqual([
+      { baum_id: "KB-001", messung: "M3" },
+      { baum_id: "KB-002", messung: "M4" },
+    ]);
+    await registry.shutdown();
+  });
+
+  it("skips a tick while the previous replace is still writing", async () => {
+    const registry = new Registry();
+    await registry.put("baeume", sqlInput({ writeMode: "replace", maxRows: 3 }));
+    let release = () => undefined as void;
+    table.hold = new Promise((resolve) => (release = resolve));
+
+    await vi.advanceTimersByTimeAsync(40_000);
+    // The start, then one tick that is still waiting; three more ticks skipped.
+    expect(table.replacing).toBe(2);
+
+    table.hold = null;
+    release();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(table.replacing).toBe(3);
     await registry.shutdown();
   });
 

@@ -56,7 +56,7 @@ export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): Value
       return () => {
         const value = next;
         next += 1;
-        return `${spec.prefix}${String(value).padStart(spec.padTo, "0")}`;
+        return sequenceKey(spec, value);
       };
     }
 
@@ -67,6 +67,43 @@ export function createGenerator(spec: GeneratorSpec, resumeFrom?: number): Value
         return Math.round((spec.center + offset) * factor) / factor;
       };
   }
+}
+
+export type SequenceSpec = Extract<GeneratorSpec, { kind: "sequence" }>;
+
+export function sequenceKey(spec: SequenceSpec, value: number): string {
+  return `${spec.prefix}${String(value).padStart(spec.padTo, "0")}`;
+}
+
+export function getPath(source: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = source;
+  for (const segment of path.split(".")) {
+    if (typeof cursor !== "object" || cursor === null) return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
+
+/** The running-number fields, in field order. */
+export function sequenceFields(scenario: Scenario): [string, SequenceSpec][] {
+  const sequences: [string, SequenceSpec][] = [];
+  for (const [path, spec] of Object.entries(scenario.fields)) {
+    if (spec.kind === "sequence") sequences.push([path, spec]);
+  }
+  return sequences;
+}
+
+export function renderBatch(
+  render: (now: Date) => Record<string, unknown>,
+  key: [string, SequenceSpec] | null,
+  count: number,
+  now: Date,
+): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, index) => {
+    const row = render(now);
+    if (key) setPath(row, key[0], sequenceKey(key[1], key[1].start + index));
+    return row;
+  });
 }
 
 /** Counter out of an existing key; null if it does not match. */

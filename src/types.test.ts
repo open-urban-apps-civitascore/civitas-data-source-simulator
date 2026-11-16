@@ -37,6 +37,80 @@ describe("scenario cadence", () => {
   });
 });
 
+describe("write mode and REST", () => {
+  const fields = { id: { kind: "sequence" }, wert: { kind: "constant", value: 1 } };
+  const sql = (scenario: Record<string, unknown>, sqlFields: Record<string, unknown> = fields) =>
+    simulationInputSchema.safeParse({
+      transport: { kind: "sql", table: "demo.werte" },
+      scenario: {
+        fields: sqlFields,
+        table: { columns: { id: "text", wert: "integer" }, primaryKey: "id" },
+        maxRows: 10,
+        ...scenario,
+      },
+    });
+  const rest = (scenario: Record<string, unknown>) =>
+    simulationInputSchema.safeParse({ transport: { kind: "rest" }, scenario: { fields, maxRows: 10, ...scenario } });
+  const mqtt = (scenario: Record<string, unknown>) =>
+    simulationInputSchema.safeParse({
+      transport: { kind: "mqtt", url: "mqtt://broker:1883", topic: "t" },
+      scenario: { fields, ...scenario },
+    });
+
+  it("appends by default, so existing scenarios keep their behaviour", () => {
+    expect(sql({}).data?.scenario.writeMode).toBe("append");
+  });
+
+  it("replaces a table or a list, but not on a broker", () => {
+    expect(sql({ writeMode: "replace" }).success).toBe(true);
+    expect(rest({ writeMode: "replace" }).success).toBe(true);
+    expect(mqtt({ writeMode: "replace" }).error?.issues[0]?.path).toEqual(["scenario", "writeMode"]);
+  });
+
+  it("refuses to replace without a cadence that ticks", () => {
+    expect(sql({ writeMode: "replace", cadence: "fillToLimit" }).success).toBe(false);
+  });
+
+  it("holds a replace to its own budget, which rewrites every row on every tick", () => {
+    expect(rest({ writeMode: "replace", maxRows: 1_000, intervalSeconds: 1 }).success).toBe(true);
+    expect(rest({ writeMode: "replace", maxRows: 1_001, intervalSeconds: 1 }).error?.issues[0]?.path).toEqual([
+      "scenario",
+      "maxRows",
+    ]);
+    expect(sql({ writeMode: "replace", maxRows: 10_001, intervalSeconds: 60 }).success).toBe(false);
+    // Appending keeps the old limit.
+    expect(sql({ maxRows: 100_000, intervalSeconds: 1 }).success).toBe(true);
+  });
+
+  it("refuses to replace a table whose key is no running number", () => {
+    const result = sql({ writeMode: "replace" }, { id: { kind: "enum", values: ["a", "b"] }, wert: fields.wert });
+    expect(result.error?.issues[0]?.path).toEqual(["scenario", "fields", "id"]);
+  });
+
+  it("takes a REST list without a table, nested fields included", () => {
+    const result = simulationInputSchema.safeParse({
+      transport: { kind: "rest" },
+      scenario: {
+        writeMode: "replace",
+        fields: { id: { kind: "sequence" }, "ort.lat": { kind: "constant", value: 49.79 } },
+        maxRows: 10,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("refuses a growing REST list, which would restart its keys after a restart", () => {
+    expect(rest({}).error?.issues[0]?.path).toEqual(["scenario", "writeMode"]);
+    expect(rest({ cadence: "fillToLimit" }).success).toBe(true);
+  });
+
+  it("bounds a REST list, which goes out whole on every fetch", () => {
+    expect(rest({ cadence: "fillToLimit", maxRows: undefined }).error?.issues[0]?.path).toEqual(["scenario", "maxRows"]);
+    expect(rest({ cadence: "fillToLimit", maxRows: 10_001 }).error?.issues[0]?.path).toEqual(["scenario", "maxRows"]);
+    expect(rest({ maxRows: 10_000, cadence: "fillToLimit" }).success).toBe(true);
+  });
+});
+
 describe("origin", () => {
   const withOrigin = (origin: unknown) =>
     simulationInputSchema.safeParse({

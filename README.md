@@ -149,6 +149,7 @@ scenario field by field. It talks to the API below and to nothing else. See
 | `DELETE` | `/simulations/{id}` | Stop and forget |
 | `POST` | `/simulations/{id}/switch_on` · `/switch_off` | Pause and resume without losing the scenario |
 | `GET` | `/simulations/{id}/sample?count=5` | Render without publishing |
+| `GET` | `/data/{id}` | A REST simulation's rows as a plain JSON array, the whole list on every call. **Open**, like the probes: the platform's HTTP source fetches without a login |
 | `POST` | `/sample` | Render an unregistered scenario — powers a catalogue preview |
 | `GET` | `/healthz` | Liveness: the process runs. Says whether it is ready and where settings are kept |
 | `GET` | `/readyz` | Readiness: 200 once the stored simulations are loaded, 503 until then |
@@ -224,8 +225,8 @@ Editing a simulation in the UI keeps its origin.
 
 | Cadence | Behaviour |
 | --- | --- |
-| `interval` (default) | One record every `intervalSeconds`. SQL: tops the table up to `seedRows` at start, then `insertsPerTick` per tick, up to `maxRows` |
-| `fillToLimit` | SQL only. Tops the table up to `maxRows` at start and writes nothing after |
+| `interval` (default) | One record every `intervalSeconds`. SQL: tops the table up to `seedRows` at start, then `insertsPerTick` per tick, up to `maxRows`. See the write mode for `replace` |
+| `fillToLimit` | SQL and REST. Tops the rows up to `maxRows` at start and writes nothing after |
 
 `fillToLimit` is the shape of master data — a tree cadastre exists whole, it does
 not grow by a row a minute. Both cadences count before they write, so a restart or
@@ -234,6 +235,62 @@ a second registration adds only what the table lacks.
 ```json
 "scenario": { "cadence": "fillToLimit", "maxRows": 25, "table": { … }, "fields": { … } }
 ```
+
+### Write mode
+
+`scenario.writeMode` says what a tick does to the rows of a SQL or REST simulation.
+
+| Write mode | Behaviour |
+| --- | --- |
+| `append` (default) | Adds rows, up to `maxRows`. The table grows into a history |
+| `replace` | Swaps its rows for a fresh batch of `maxRows` rows on every tick, in one transaction. The key counts from its start again, so each batch carries the same keys; other running numbers keep counting |
+
+`replace` keeps the same keys on purpose: the platform's PostGIS sink upserts and
+never deletes, so new keys would pile up on the platform even though the source
+table only ever holds one batch. With the same keys the platform overwrites its
+rows and shows the current state, like a table of live readings. `seedRows` and
+`insertsPerTick` do not apply; a SQL table's primary key must be a `sequence`,
+and a REST list's key is its first `sequence` field. `replace` needs the
+`interval` cadence.
+
+A replace only ever deletes rows it wrote: rows marked `simuliert` whose key
+starts with its own prefix. It never overwrites a row someone else wrote under
+the same key, and it refuses a table without the `simuliert` column, which the
+generator did not create and so cannot tell its own rows in. Because it
+rewrites every row on every tick, it is held to 1,000 rows per second of
+interval and 10,000 rows at most.
+
+Rows a replace drops for good stay on the platform with their last values,
+since it never deletes: switching an appending table to `replace`, or lowering
+`maxRows`, leaves those rows there. The editor warns before such a save.
+
+### REST
+
+```json
+{ "transport": { "kind": "rest" },
+  "scenario": { "intervalSeconds": 60, "writeMode": "replace", "maxRows": 12,
+                "fields": { "stadtteil": { "kind": "sequence", "prefix": "st-" },
+                            "einwohner": { "kind": "randomWalk", "min": 5000, "max": 15000, "step": 50, "integer": true } } } }
+```
+
+A REST simulation keeps its rows in memory and serves them at `GET /data/{id}`:
+a plain JSON array, the whole list on every call, the way most APIs of a
+"Fachverfahren" answer. It takes `writeMode: "replace"` (the current state,
+rewritten every tick) or `cadence: "fillToLimit"` (a fixed list, written once),
+but no growing list: the rows live in memory, so after a restart its running
+numbers would begin again and overwrite rows the platform already holds. A
+growing history belongs to SQL or MQTT. There is no table description; field
+keys may be dotted paths, as for MQTT. `maxRows` is required and at most
+10,000, because no paging is offered yet. The response carries
+`X-Simuliert: true` instead of a marker in the rows.
+
+On the platform, point an HTTP data source at the generator: `baseUrl` is the
+generator's address as NiFi reaches it plus `/data`, the API call's `path` is
+`/{id}`, no authentication, no `entriesPath`, no pagination, and the pipeline's
+cron sets how often it fetches. `GET` and `HEAD` need no token.
+
+The rows survive a pause and an edit. A restart of the service writes the list
+again with the same keys, which the platform simply overwrites.
 
 ## Design decisions
 

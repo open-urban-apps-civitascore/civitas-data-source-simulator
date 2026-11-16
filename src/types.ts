@@ -77,18 +77,46 @@ export const cadenceSchema = z.enum(["interval", "fillToLimit"]);
 
 export type Cadence = z.infer<typeof cadenceSchema>;
 
+/**
+ * What a tick does to the rows. `append` adds them. `replace` swaps the whole
+ * table for a fresh batch of `maxRows` rows, its running numbers counted from
+ * the start again, so the platform overwrites the same keys instead of
+ * collecting new ones.
+ */
+export const writeModeSchema = z.enum(["append", "replace"]);
+
+export type WriteMode = z.infer<typeof writeModeSchema>;
+
+/** The whole list goes out on every fetch, so it stays small. */
+export const MAX_REST_ROWS = 10_000;
+
+/**
+ * A replace rewrites every row on every tick, so it gets a budget of its own;
+ * appending is held to `insertsPerTick`.
+ */
+export const MAX_REPLACE_ROWS = 10_000;
+export const MAX_REPLACE_ROWS_PER_SECOND = 1_000;
+
+/** How many rows a replace may rewrite per tick at this interval. */
+export function replaceLimit(intervalSeconds: number): number {
+  return Math.min(MAX_REPLACE_ROWS, Math.floor(MAX_REPLACE_ROWS_PER_SECOND * intervalSeconds));
+}
+
 /** Field keys are dotted paths, so `location.lat` needs no extra syntax. */
 export const scenarioSchema = z.object({
   intervalSeconds: z.number().positive().max(3600).default(10),
   cadence: cadenceSchema.default("interval"),
   fields: z.record(z.string(), generatorSpecSchema),
 
+  // SQL and REST.
+  writeMode: writeModeSchema.default("append"),
+
   // SQL only.
   table: tableSpecSchema.optional(),
   /** Topped up to this many rows at start, so the map is never empty. */
   seedRows: z.number().int().min(0).max(10_000).default(0),
   insertsPerTick: z.number().int().min(0).max(100).default(1),
-  /** Mandatory for SQL: every pipeline run re-reads the whole table. */
+  /** Mandatory for SQL and REST: every pipeline run reads all rows. */
   maxRows: z.number().int().positive().max(100_000).optional(),
   /** States the fast-forward openly rather than faking a plausible rate. */
   timeCompression: z.string().optional(),
@@ -142,6 +170,16 @@ export const sqlTransportSchema = z.object({
   readDsn: z.string().optional().transform(withoutCredentials),
 });
 
+/** Rows kept in memory, served at `GET /data/{id}` for the platform's HTTP source. */
+export const restTransportSchema = z.object({
+  kind: z.literal("rest"),
+});
+
+/** The path the platform fetches a REST simulation's rows from. */
+export function dataPathFor(id: string): string {
+  return `/data/${encodeURIComponent(id)}`;
+}
+
 /** A portal artifact: the name a person sees there, and the ids that find it. */
 export const artifactRefSchema = z.object({
   name: z.string().min(1).max(200),
@@ -179,24 +217,76 @@ export const simulationInputSchema = z
     name: z.string().max(200).optional(),
     description: z.string().max(2000).optional(),
     origin: originSchema.optional(),
-    transport: z.union([mqttTransportSchema, sqlTransportSchema]),
+    transport: z.union([mqttTransportSchema, sqlTransportSchema, restTransportSchema]),
     scenario: scenarioSchema,
     /** Registered but paused. */
     enabled: z.boolean().default(true),
   })
   .superRefine((input, ctx) => {
-    if (input.transport.kind !== "sql") {
-      if (input.scenario.cadence === "fillToLimit") {
+    const { transport, scenario } = input;
+    if (transport.kind === "mqtt") {
+      if (scenario.cadence === "fillToLimit") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["scenario", "cadence"],
-          message: "fillToLimit is SQL only: a broker keeps no rows to fill up to a limit.",
+          message: "fillToLimit is SQL and REST only: a broker keeps no rows to fill up to a limit.",
+        });
+      }
+      if (scenario.writeMode === "replace") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "writeMode"],
+          message: "Ersetzen gibt es nur für SQL und REST: ein Broker hält keine Zeilen, die ersetzt werden könnten.",
         });
       }
       return;
     }
 
-    if (!input.scenario.table) {
+    if (scenario.writeMode === "replace" && scenario.cadence === "fillToLimit") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scenario", "writeMode"],
+        message: "Ersetzen braucht einen Takt: „Alles auf einmal“ schreibt nur beim Start.",
+      });
+    }
+    if (scenario.writeMode === "replace" && scenario.maxRows !== undefined) {
+      const limit = replaceLimit(scenario.intervalSeconds);
+      if (scenario.maxRows > limit) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "maxRows"],
+          message: `Ersetzen schreibt jeden Takt alle Zeilen neu, deshalb höchstens ${MAX_REPLACE_ROWS_PER_SECOND.toLocaleString("de-DE")} Zeilen pro Sekunde: bei einem Takt von ${scenario.intervalSeconds} s also höchstens ${limit.toLocaleString("de-DE")} Zeilen.`,
+        });
+      }
+    }
+
+    if (transport.kind === "rest") {
+      // The list lives in memory: a growing one would restart its keys after a restart.
+      if (scenario.cadence === "interval" && scenario.writeMode !== "replace") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "writeMode"],
+          message:
+            "Eine REST-Liste wächst nicht: sie lebt im Speicher, und nach einem Neustart würden ihre Laufnummern von vorn beginnen. „Ersetzen“ oder „Alles auf einmal“ wählen.",
+        });
+      }
+      if (scenario.maxRows === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "maxRows"],
+          message: "maxRows ist für REST Pflicht: jeder Abruf liefert die ganze Liste.",
+        });
+      } else if (scenario.maxRows > MAX_REST_ROWS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scenario", "maxRows"],
+          message: `Eine REST-Liste hat höchstens ${MAX_REST_ROWS.toLocaleString("de-DE")} Zeilen: jeder Abruf liefert sie ganz.`,
+        });
+      }
+      return;
+    }
+
+    if (!scenario.table) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["scenario", "table"],
@@ -204,7 +294,7 @@ export const simulationInputSchema = z
       });
       return;
     }
-    if (input.scenario.maxRows === undefined) {
+    if (scenario.maxRows === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["scenario", "maxRows"],
@@ -213,8 +303,9 @@ export const simulationInputSchema = z
     }
 
     let columns: Record<string, string>;
+    let primaryKey: string;
     try {
-      columns = resolveTable(input.scenario.table).columns;
+      ({ columns, primaryKey } = resolveTable(scenario.table));
     } catch (error) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -224,7 +315,16 @@ export const simulationInputSchema = z
       return;
     }
 
-    for (const field of Object.keys(input.scenario.fields)) {
+    // Each batch starts its keys over; anything but a counter would repeat within one.
+    if (scenario.writeMode === "replace" && scenario.fields[primaryKey]?.kind !== "sequence") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scenario", "fields", primaryKey],
+        message: `Beim Ersetzen braucht der Primärschlüssel „${primaryKey}“ eine laufende Nummer: jede Ladung beginnt wieder bei denselben Schlüsseln.`,
+      });
+    }
+
+    for (const field of Object.keys(scenario.fields)) {
       if (field.includes(".")) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

@@ -74,6 +74,8 @@ export function assertClaims(claims: Record<string, unknown>, config: AuthConfig
 /** Liveness answers before anyone is authenticated: probes carry no token. */
 const OPEN_PATHS = new Set(["/healthz", "/readyz"]);
 
+export const DATA_PATH_PREFIX = "/data/";
+
 export function createAuthMiddleware(
   config: AuthConfig | null,
   /** Injectable so the middleware can be tested without a network. */
@@ -89,7 +91,8 @@ export function createAuthMiddleware(
       next();
       return;
     }
-    if (OPEN_PATHS.has(req.path)) {
+    const reading = req.method === "GET" || req.method === "HEAD";
+    if (OPEN_PATHS.has(req.path) || (reading && req.path.startsWith(DATA_PATH_PREFIX))) {
       next();
       return;
     }

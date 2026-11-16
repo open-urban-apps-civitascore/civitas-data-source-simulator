@@ -11,6 +11,7 @@ function stored(id: string, enabled = true): StoredSimulation {
       scenario: {
         intervalSeconds: 10,
         cadence: "interval",
+        writeMode: "append",
         fields: { value: { kind: "constant", value: 1 } },
         seedRows: 0,
         insertsPerTick: 1,

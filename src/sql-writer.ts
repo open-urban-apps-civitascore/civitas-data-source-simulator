@@ -2,6 +2,7 @@ import pg from "pg";
 
 import { CONNECT_TIMEOUT_MS, describeDatabaseError } from "./connect-error.js";
 import type { ResolvedTable } from "./row-schema.js";
+import type { RowSink } from "./rows.js";
 import { SIMULATED_COLUMN, type ColumnType } from "./types.js";
 
 // Owns the table's lifetime: the platform only creates tables at the receiving
@@ -60,13 +61,15 @@ export function rowsPerStatement(columnCount: number): number {
   return Math.max(1, Math.floor(MAX_BIND_PARAMETERS / Math.max(1, columnCount)));
 }
 
-export interface SqlWriter {
+export interface SqlWriter extends RowSink {
   ensureTable(): Promise<void>;
-  /** Highest counter used for `prefix`, so a restart continues the series. */
-  maxSequence(column: string, prefix: string): Promise<number | null>;
-  countRows(): Promise<number>;
-  write(rows: Record<string, unknown>[]): Promise<number>;
   close(): Promise<void>;
+}
+
+type Queryable = Pick<pg.ClientBase, "query">;
+
+function likeEscape(text: string): string {
+  return text.replace(/[%_\\]/g, "\\$&");
 }
 
 export interface SqlWriterOptions {
@@ -92,17 +95,21 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
   }
 
   const columns = Object.keys(spec.columns);
+  const simulated = quoteIdent(SIMULATED_COLUMN);
 
-  // Upsert, never delete: a row removed here would stay on the map forever.
+  // Upsert. Only `replace` deletes, and it writes the same keys straight back:
+  // the platform never deletes, so a row removed for good would stay on its map.
   const updates = columns
     .filter((column) => column !== spec.primaryKey)
     .map((column) => `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`);
 
-  const conflict = updates.length
+  const appendConflict = updates.length
     ? `ON CONFLICT (${primaryKey}) DO UPDATE SET ${updates.join(", ")}`
     : `ON CONFLICT (${primaryKey}) DO NOTHING`;
+  // A replace never takes over a row someone else wrote under the same key.
+  const replaceConflict = updates.length ? `${appendConflict} WHERE ${qualified}.${simulated}` : appendConflict;
 
-  const insert = async (rows: Record<string, unknown>[]): Promise<number> => {
+  const insert = async (rows: Record<string, unknown>[], db: Queryable, conflict: string): Promise<number> => {
     const placeholders: string[] = [];
     const values: unknown[] = [];
     rows.forEach((row, rowIndex) => {
@@ -111,7 +118,7 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
       values.push(...columns.map((column) => row[column] ?? null));
     });
 
-    const result = await pool.query(
+    const result = await db.query(
       `INSERT INTO ${qualified} (${columns.map(quoteIdent).join(", ")})
        VALUES ${placeholders.join(", ")}
        ${conflict}`,
@@ -120,23 +127,41 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
     return result.rowCount ?? 0;
   };
 
+  /** In statements small enough for the bind-parameter cap. */
+  const insertAll = async (rows: Record<string, unknown>[], db: Queryable, conflict: string): Promise<number> => {
+    const size = rowsPerStatement(columns.length);
+    let written = 0;
+    for (let start = 0; start < rows.length; start += size) {
+      written += await insert(rows.slice(start, start + size), db, conflict);
+    }
+    return written;
+  };
+
+  /** False for a table someone else created: `replace` cannot tell its own rows there. */
+  let marked = false;
+
   return {
     async ensureTable() {
       const definitions = columns.map(
         (column) => `${quoteIdent(column)} ${COLUMN_DDL[spec.columns[column]!]}`,
       );
       // Never declared by the scenario, so it cannot be switched off.
-      definitions.push(`${quoteIdent(SIMULATED_COLUMN)} boolean NOT NULL DEFAULT true`);
+      definitions.push(`${simulated} boolean NOT NULL DEFAULT true`);
       definitions.push(`PRIMARY KEY (${primaryKey})`);
 
       await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schema)}`);
       await pool.query(`CREATE TABLE IF NOT EXISTS ${qualified} (\n  ${definitions.join(",\n  ")}\n)`);
+      const { rowCount } = await pool.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3",
+        [schema, name, SIMULATED_COLUMN],
+      );
+      marked = (rowCount ?? 0) > 0;
     },
 
     async maxSequence(column, prefix) {
       const { rows } = await pool.query<{ key: string }>(
         `SELECT ${quoteIdent(column)} AS key FROM ${qualified} WHERE ${quoteIdent(column)} LIKE $1`,
-        [`${prefix.replace(/[%_\\]/g, "\\$&")}%`],
+        [`${likeEscape(prefix)}%`],
       );
       let highest: number | null = null;
       for (const row of rows) {
@@ -154,12 +179,36 @@ export async function createSqlWriter({ dsn, table, spec }: SqlWriterOptions): P
     },
 
     async write(rows) {
-      const size = rowsPerStatement(columns.length);
-      let written = 0;
-      for (let start = 0; start < rows.length; start += size) {
-        written += await insert(rows.slice(start, start + size));
+      return insertAll(rows, pool, appendConflict);
+    },
+
+    async replace(rows, keyPrefix = "") {
+      if (!marked) {
+        throw new Error(
+          `Ersetzen löscht nur Zeilen, die der Generator geschrieben hat, und erkennt sie an der Spalte „${SIMULATED_COLUMN}“. ` +
+            `Der Tabelle ${table} fehlt sie: sie wurde nicht vom Generator angelegt.`,
+        );
       }
-      return written;
+      const client = await pool.connect();
+      let failure: Error | undefined;
+      try {
+        await client.query("BEGIN");
+        // DELETE, not TRUNCATE: readers keep seeing the old rows until the commit.
+        // Only this series: another simulation may write into the same table.
+        await client.query(`DELETE FROM ${qualified} WHERE ${simulated} AND ${primaryKey} LIKE $1`, [
+          `${likeEscape(keyPrefix)}%`,
+        ]);
+        const written = await insertAll(rows, client, replaceConflict);
+        await client.query("COMMIT");
+        return written;
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        // A failed client is dropped, not handed out again.
+        client.release(failure);
+      }
     },
 
     async close() {
