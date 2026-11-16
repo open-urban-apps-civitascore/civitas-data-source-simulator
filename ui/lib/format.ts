@@ -1,4 +1,4 @@
-import type { Cadence } from "./types";
+import type { Cadence, WriteMode } from "./types";
 
 const dateTime = new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" });
 const time = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -35,6 +35,8 @@ export function formatInterval(seconds: number): string {
 }
 
 /** A filled table has no interval worth showing. */
-export function formatCadence(sim: { cadence?: Cadence; intervalSeconds: number }): string {
-  return sim.cadence === "fillToLimit" ? "einmalig bis zur Obergrenze" : formatInterval(sim.intervalSeconds);
+export function formatCadence(sim: { cadence?: Cadence; writeMode?: WriteMode; intervalSeconds: number }): string {
+  if (sim.cadence === "fillToLimit") return "einmalig bis zur Obergrenze";
+  const interval = formatInterval(sim.intervalSeconds);
+  return sim.writeMode === "replace" ? `${interval}, alle Zeilen ersetzt` : interval;
 }

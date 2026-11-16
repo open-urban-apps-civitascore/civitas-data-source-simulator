@@ -24,15 +24,34 @@ export type ColumnType = "text" | "integer" | "double" | "boolean" | "timestampt
 
 export type MqttTransport = { kind: "mqtt"; url: string; topic: string };
 export type SqlTransport = { kind: "sql"; table: string; dsn?: string; readDsn?: string };
-export type Transport = MqttTransport | SqlTransport;
+/** Rows the generator serves at `GET /data/{id}`. */
+export type RestTransport = { kind: "rest" };
+export type Transport = MqttTransport | SqlTransport | RestTransport;
 
-/** `fillToLimit`: SQL only. The table is filled to `maxRows` at start, nothing follows. */
+/** SQL and REST keep rows; a broker does not. */
+export const hasRows = (transport: Transport): boolean => transport.kind !== "mqtt";
+
+/** `fillToLimit`: SQL and REST. The rows are filled to `maxRows` at start, nothing follows. */
 export type Cadence = "interval" | "fillToLimit";
+
+/** SQL and REST. `replace`: every tick swaps all rows for `maxRows` fresh ones with the same keys. */
+export type WriteMode = "append" | "replace";
+
+/** The REST list goes out whole on every fetch. */
+export const MAX_REST_ROWS = 10_000;
+
+/** A replace rewrites every row each tick: at most this many per second, and 10,000 in all. */
+export const MAX_REPLACE_ROWS_PER_SECOND = 1_000;
+
+export function replaceLimit(intervalSeconds: number): number {
+  return Math.min(10_000, Math.floor(MAX_REPLACE_ROWS_PER_SECOND * intervalSeconds));
+}
 
 /** Fields are a map of dotted path to generator. */
 export interface WireScenario {
   intervalSeconds: number;
   cadence?: Cadence;
+  writeMode?: WriteMode;
   fields: Record<string, GeneratorSpec>;
   table?: { rowSchema?: unknown; rowClass?: string; columns?: Record<string, ColumnType>; primaryKey?: string };
   seedRows?: number;
@@ -77,12 +96,15 @@ export interface SimulationStatus {
   /** Absent from services older than the origin; null for a simulation made by hand. */
   origin?: Origin | null;
   enabled: boolean;
-  transport: "mqtt" | "sql";
+  transport: "mqtt" | "sql" | "rest";
   topic: string | null;
+  /** Broker URL, the table for SQL, the data path for REST. */
   target: string;
   intervalSeconds: number;
   /** Absent from services older than the cadence. */
   cadence?: Cadence;
+  /** Absent from services older than the write mode. */
+  writeMode?: WriteMode;
   createdAt: string;
   publishedCount: number;
   rowCount: number | null;
@@ -107,6 +129,7 @@ export interface FieldSpec {
 export interface Scenario {
   intervalSeconds: number;
   cadence?: Cadence;
+  writeMode?: WriteMode;
   fields: FieldSpec[];
   primaryKey?: string;
   seedRows?: number;

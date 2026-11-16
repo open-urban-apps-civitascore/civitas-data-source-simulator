@@ -19,7 +19,7 @@ export default async function DocsPage() {
             </p>
           </div>
           <div>
-            <h2 className="mb-2 text-base">Zwei Wege in die Plattform</h2>
+            <h2 className="mb-2 text-base">Drei Wege in die Plattform</h2>
             <ul className="list-disc space-y-1 pl-5">
               <li>
                 <strong>MQTT-Nachrichten</strong> an einen Broker. Eine Pipeline mit MQTT-Quelle liest sie ab.
@@ -28,7 +28,17 @@ export default async function DocsPage() {
                 <strong>SQL-Zeilen</strong> in eine Tabelle, die ein Fachverfahren darstellt. Ein zeitgesteuerter SQL-Job der Pipeline
                 liest die ganze Tabelle, deshalb gibt es eine Obergrenze.
               </li>
+              <li>
+                <strong>Eine REST-Schnittstelle</strong>, wie sie ein Fachverfahren anbietet. Die HTTP-Quelle der Pipeline ruft
+                im Takt <span className="font-mono">GET /data/&lt;ID&gt;</span> beim Generator ab und bekommt jedes Mal die ganze
+                Liste als JSON.
+              </li>
             </ul>
+            <p className="mt-2 text-muted-foreground">
+              Bei einer Tabelle entscheidet ein Schalter, was jeder Takt tut: <strong>Anhängen</strong> lässt einen
+              Verlauf wachsen, <strong>Ersetzen</strong> schreibt alles neu, mit denselben Schlüsseln, und zeigt so immer
+              nur den aktuellen Stand. Eine REST-Liste wird immer ersetzt oder einmal befüllt.
+            </p>
           </div>
           <div>
             <h2 className="mb-2 text-base">Die Generatoren</h2>

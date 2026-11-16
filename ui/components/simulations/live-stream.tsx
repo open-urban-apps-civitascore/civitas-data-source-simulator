@@ -27,6 +27,7 @@ export function LiveStream({
   const visible = shown.slice(0, limit);
   const hidden = shown.length - visible.length;
   const live = sim.enabled && !sim.lastError && !sim.atCap;
+  const unit = sim.transport === "rest" ? "Liste" : "Tabelle";
   const missing = sim.intervalSeconds * 1000 < pollMs;
 
   return (
@@ -41,7 +42,7 @@ export function LiveStream({
           </span>
           <Radio className="size-4 shrink-0 text-muted-foreground" />
           <span className="truncate font-mono text-xs text-muted-foreground">
-            {sim.transport === "mqtt" ? "topic" : "table"} {sim.transport === "mqtt" ? sim.topic : sim.target}
+            {sim.transport === "mqtt" ? `topic ${sim.topic}` : sim.transport === "rest" ? `GET ${sim.target}` : `table ${sim.target}`}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -87,8 +88,8 @@ export function LiveStream({
                 ? "Keine Events – die Simulation meldet einen Fehler."
                 : sim.atCap
                   ? sim.cadence === "fillToLimit"
-                    ? "Keine Events – die Tabelle ist bis zur Obergrenze befüllt, mehr ist nicht vorgesehen."
-                    : "Keine Events – die Tabelle hat ihre Obergrenze erreicht."
+                    ? `Keine Events – die ${unit} ist bis zur Obergrenze befüllt, mehr ist nicht vorgesehen.`
+                    : `Keine Events – die ${unit} hat ihre Obergrenze erreicht.`
                   : "Keine Events – die Simulation ist pausiert."}
           </p>
         ) : null}
@@ -100,7 +101,9 @@ export function LiveStream({
             <div className="mb-1 flex items-center gap-2 text-[11px] text-background/50">
               <span>#{event.seq}</span>
               <span>{formatTime(event.at)}</span>
-              <span className="ml-auto">{sim.transport === "mqtt" ? "publish" : "INSERT"}</span>
+              <span className="ml-auto">
+                {sim.transport === "mqtt" ? "publish" : sim.writeMode === "replace" ? "ersetzt" : "neue Zeile"}
+              </span>
             </div>
             <pre className="whitespace-pre-wrap break-all">{JSON.stringify(event.payload, null, 2)}</pre>
           </div>

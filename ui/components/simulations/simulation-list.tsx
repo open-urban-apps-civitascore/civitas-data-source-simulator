@@ -17,7 +17,7 @@ import { usePoll } from "@/lib/use-poll";
 const POLL_MS = 2000;
 const MAX_SIMULATIONS = 50;
 
-type Filter = "all" | "enabled" | "disabled" | "mqtt" | "sql";
+type Filter = "all" | "enabled" | "disabled" | "mqtt" | "sql" | "rest";
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "Alle" },
@@ -25,6 +25,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "disabled", label: "Pausiert" },
   { value: "mqtt", label: "MQTT" },
   { value: "sql", label: "SQL" },
+  { value: "rest", label: "REST" },
 ];
 
 export function SimulationList({ initial }: { initial: SimulationStatus[] }) {
@@ -56,6 +57,7 @@ export function SimulationList({ initial }: { initial: SimulationStatus[] }) {
     if (filter === "disabled" && s.enabled) return false;
     if (filter === "mqtt" && s.transport !== "mqtt") return false;
     if (filter === "sql" && s.transport !== "sql") return false;
+    if (filter === "rest" && s.transport !== "rest") return false;
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return `${s.name ?? ""} ${s.description ?? ""} ${s.topic ?? ""} ${s.target} ${s.id}`

@@ -21,7 +21,7 @@ export function StatusBadge({ sim }: { sim: SimulationStatus }) {
   if (sim.atCap) {
     return (
       <Badge variant="warn">
-        <Database className="size-3" /> Tabelle voll
+        <Database className="size-3" /> {sim.transport === "rest" ? "Liste voll" : "Tabelle voll"}
       </Badge>
     );
   }
@@ -33,5 +33,6 @@ export function StatusBadge({ sim }: { sim: SimulationStatus }) {
 }
 
 export function TransportBadge({ sim }: { sim: SimulationStatus }) {
-  return sim.transport === "mqtt" ? <Badge variant="mqtt">MQTT</Badge> : <Badge variant="sql">SQL</Badge>;
+  if (sim.transport === "mqtt") return <Badge variant="mqtt">MQTT</Badge>;
+  return sim.transport === "rest" ? <Badge variant="rest">REST</Badge> : <Badge variant="sql">SQL</Badge>;
 }

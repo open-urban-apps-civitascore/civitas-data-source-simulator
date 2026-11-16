@@ -68,21 +68,28 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
     ...(origin?.stream ? [{ label: "Stream", value: <span className="font-mono text-xs">{origin.stream}</span> }] : []),
   ];
 
+  const mono = (text: string) => <span className="font-mono text-xs">{text}</span>;
+  const where: { label: string; value: React.ReactNode }[] =
+    sim.transport === "mqtt"
+      ? [
+          { label: "Broker", value: mono(sim.target) },
+          { label: "Topic", value: mono(sim.topic ?? "") },
+        ]
+      : sim.transport === "rest"
+        ? [
+            // The platform needs the generator's own address in front; it differs per deployment.
+            { label: "Abruf beim Generator", value: mono(`GET ${sim.target}`) },
+            { label: "Antwort", value: "JSON-Liste, bei jedem Abruf ganz, ohne Login und ohne Seiten" },
+          ]
+        : [
+            { label: "Datenbank", value: mono("DEMO_DB_DSN (Generator-Konfiguration)") },
+            { label: "Tabelle", value: mono(sim.target) },
+          ];
+
   const facts: { label: string; value: React.ReactNode }[] = [
     ...belongsTo,
     { label: "Typ", value: <TransportBadge sim={sim} /> },
-    {
-      label: sim.transport === "mqtt" ? "Broker" : "Datenbank",
-      value: (
-        <span className="font-mono text-xs">
-          {sim.transport === "mqtt" ? sim.target : "DEMO_DB_DSN (Generator-Konfiguration)"}
-        </span>
-      ),
-    },
-    {
-      label: sim.transport === "mqtt" ? "Topic" : "Tabelle",
-      value: <span className="font-mono text-xs">{sim.topic ?? sim.target}</span>,
-    },
+    ...where,
     { label: "Takt", value: formatCadence(sim) },
     { label: "Erzeugt", value: formatDateTime(sim.createdAt) },
     {
@@ -94,10 +101,13 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
       value: `${formatRelative(sim.lastPublishedAt)}${sim.lastPublishedAt ? ` · ${formatDateTime(sim.lastPublishedAt)}` : ""}`,
     },
   ];
-  if (sim.transport === "sql") {
+  if (sim.transport !== "mqtt") {
     facts.push({
-      label: "Tabellenfüllung",
-      value: `${formatNumber(sim.rowCount ?? 0)} / ${formatNumber(sim.maxRows ?? 0)} Zeilen`,
+      label: sim.transport === "rest" ? "Listenlänge" : "Tabellenfüllung",
+      value:
+        sim.writeMode === "replace"
+          ? `${formatNumber(sim.rowCount ?? 0)} Zeilen, jeden Takt neu`
+          : `${formatNumber(sim.rowCount ?? 0)} / ${formatNumber(sim.maxRows ?? 0)} Zeilen`,
     });
   }
   facts.push({ label: "ID", value: <span className="font-mono text-xs text-muted-foreground">{sim.id}</span> });
@@ -174,7 +184,9 @@ export function SimulationDetail({ initial, initialView = "fields" }: { initial:
                   ? "Expertenansicht: genau das, was die Control-API des Generators entgegennimmt."
                   : sim.transport === "mqtt"
                     ? "So sieht jede gesendete Nachricht aus – im eigenen Format des Use Case, nicht in SensorThings."
-                    : "So sieht jede geschriebene Zeile aus. Die Spalte „simuliert“ setzt der Generator immer."
+                    : sim.transport === "rest"
+                      ? "So sieht jeder Eintrag der Liste aus, die die Plattform abruft."
+                      : "So sieht jede geschriebene Zeile aus. Die Spalte „simuliert“ setzt der Generator immer."
               }
               action={<ViewToggle value={view} onChange={setView} />}
             />

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, Database, Plus, Save } from "lucide-react";
 
 import { PageBody } from "@/components/layout/page-body";
@@ -19,7 +19,18 @@ import { fromJson, toInput, toJson, toScenario } from "@/lib/api-json";
 import { createSimulation, saveSimulation } from "@/lib/client";
 import { topicFor } from "@/lib/slug";
 import { specMessages } from "@/lib/spec-checks";
-import type { Cadence, FieldSpec, SimulationDraft } from "@/lib/types";
+import {
+  hasRows,
+  MAX_REPLACE_ROWS_PER_SECOND,
+  MAX_REST_ROWS,
+  replaceLimit,
+  type Cadence,
+  type FieldSpec,
+  type SimulationDraft,
+  type SqlTransport,
+  type Transport,
+  type WriteMode,
+} from "@/lib/types";
 
 const MQTT_FIELDS: FieldSpec[] = [
   { name: "sensorId", spec: { kind: "constant", value: "sensor-001" } },
@@ -50,11 +61,22 @@ const sameFields = (a: FieldSpec[], b: FieldSpec[]) => JSON.stringify(a) === JSO
 
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60, 300, 900, 3600];
 
-/** Tables only: master data such as a cadastre exists whole instead of growing. */
+/** Rows only: master data such as a cadastre exists whole instead of growing. */
 const CADENCES: { cadence: Cadence; label: string }[] = [
   { cadence: "interval", label: "Im Takt" },
   { cadence: "fillToLimit", label: "Alles auf einmal" },
 ];
+
+const WRITE_MODES: { mode: WriteMode; label: string }[] = [
+  { mode: "append", label: "Anhängen" },
+  { mode: "replace", label: "Ersetzen" },
+];
+
+const TRANSPORT_LABEL: Record<Transport["kind"], string> = {
+  mqtt: "MQTT-Nachrichten",
+  sql: "SQL-Tabelle",
+  rest: "REST-Schnittstelle",
+};
 
 /** Empty means the service's default; anything typed must be a whole number in range. */
 function rowsError(value: number | undefined, from: number, to: number): string | undefined {
@@ -62,9 +84,19 @@ function rowsError(value: number | undefined, from: number, to: number): string 
   return `Eine ganze Zahl von ${from} bis ${to.toLocaleString("de-DE")}.`;
 }
 
-function maxRowsError(value: number | undefined): string | undefined {
-  if (value === undefined || Number.isNaN(value)) return "Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle.";
-  return rowsError(value, 1, 100_000);
+function maxRowsError(
+  value: number | undefined,
+  transport: Transport["kind"],
+  replaceAt?: number,
+): string | undefined {
+  if (value === undefined || Number.isNaN(value)) {
+    return transport === "rest"
+      ? "Pflicht: jeder Abruf liefert die ganze Liste."
+      : "Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle.";
+  }
+  // A replace rewrites every row each tick, so the interval sets the limit.
+  if (replaceAt !== undefined) return rowsError(value, 1, replaceLimit(Number.isFinite(replaceAt) ? replaceAt : 1));
+  return rowsError(value, 1, transport === "rest" ? MAX_REST_ROWS : 100_000);
 }
 
 function intervalError(value: number): string | undefined {
@@ -73,25 +105,39 @@ function intervalError(value: number): string | undefined {
 
 function validate(draft: SimulationDraft): string[] {
   const errors: string[] = [];
-  const fill = draft.transport.kind === "sql" && draft.scenario.cadence === "fillToLimit";
+  const fill = hasRows(draft.transport) && draft.scenario.cadence === "fillToLimit";
+  const replace = !fill && draft.scenario.writeMode === "replace";
   if (!draft.name.trim()) errors.push("Ein Name fehlt.");
   if (draft.transport.kind === "mqtt") {
     // The generator checks the address itself and says what is wrong with it.
     if (!draft.transport.url.trim()) errors.push("Die Broker-Adresse fehlt.");
     if (!draft.transport.topic.trim()) errors.push("Das Topic fehlt.");
   } else {
-    if (!draft.transport.table.trim()) errors.push("Der Tabellenname fehlt.");
-    if (!draft.scenario.primaryKey) errors.push("Eine SQL-Simulation braucht einen Primärschlüssel.");
-    const maxRows = maxRowsError(draft.scenario.maxRows);
-    if (maxRows) errors.push(`Obergrenze (Zeilen): ${maxRows}`);
-    // A fill writes up to the limit at once; these two are not used then.
-    const seedRows = fill ? undefined : rowsError(draft.scenario.seedRows, 0, 10_000);
-    if (seedRows) errors.push(`Zeilen beim Start: ${seedRows}`);
-    const insertsPerTick = fill ? undefined : rowsError(draft.scenario.insertsPerTick, 0, 100);
-    if (insertsPerTick) errors.push(`Zeilen pro Tick: ${insertsPerTick}`);
-    for (const f of draft.scenario.fields) {
-      if (f.name.includes(".")) errors.push(`Spaltennamen dürfen keine Punkte enthalten: ${f.name}`);
+    if (draft.transport.kind === "rest" && !fill && !replace) {
+      errors.push("Eine REST-Liste wächst nicht: „Ersetzen“ oder „Alles auf einmal“ wählen.");
     }
+    if (draft.transport.kind === "sql") {
+      if (!draft.transport.table.trim()) errors.push("Der Tabellenname fehlt.");
+      const key = draft.scenario.fields.find((f) => f.name === draft.scenario.primaryKey);
+      if (!key) errors.push("Eine SQL-Simulation braucht einen Primärschlüssel.");
+      else if (replace && key.spec.kind !== "sequence") {
+        errors.push("Beim Ersetzen braucht der Primärschlüssel eine laufende Nummer.");
+      }
+      for (const f of draft.scenario.fields) {
+        if (f.name.includes(".")) errors.push(`Spaltennamen dürfen keine Punkte enthalten: ${f.name}`);
+      }
+    }
+    const maxRows = maxRowsError(
+      draft.scenario.maxRows,
+      draft.transport.kind,
+      replace ? draft.scenario.intervalSeconds : undefined,
+    );
+    if (maxRows) errors.push(`${replace ? "Zeilen je Takt" : "Obergrenze (Zeilen)"}: ${maxRows}`);
+    // A fill or a replace writes a whole set at once; these two are not used then.
+    const seedRows = fill || replace ? undefined : rowsError(draft.scenario.seedRows, 0, 10_000);
+    if (seedRows) errors.push(`Zeilen beim Start: ${seedRows}`);
+    const insertsPerTick = fill || replace ? undefined : rowsError(draft.scenario.insertsPerTick, 0, 100);
+    if (insertsPerTick) errors.push(`Zeilen pro Tick: ${insertsPerTick}`);
   }
   if (draft.scenario.fields.length === 0) errors.push("Mindestens ein Feld wird gebraucht.");
   const names = draft.scenario.fields.map((f) => f.name.trim());
@@ -130,8 +176,18 @@ export function SimulationEditor({
   const [jsonText, setJsonText] = useState(() => (initialMode === "json" ? toJson(draft) : ""));
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonApplied, setJsonApplied] = useState(false);
+  const lastSql = useRef<SqlTransport | null>(initial?.transport.kind === "sql" ? initial.transport : null);
   const errors = validate(draft);
-  const fill = draft.transport.kind === "sql" && draft.scenario.cadence === "fillToLimit";
+  const rows = hasRows(draft.transport);
+  const fill = rows && draft.scenario.cadence === "fillToLimit";
+  const replace = rows && !fill && draft.scenario.writeMode === "replace";
+  const unit = draft.transport.kind === "rest" ? "Liste" : "Tabelle";
+  // The platform never deletes, so rows that a replace drops stay there for good.
+  const dropsRows =
+    replace &&
+    initial !== undefined &&
+    initial.transport.kind === draft.transport.kind &&
+    (initial.scenario.writeMode !== "replace" || (draft.scenario.maxRows ?? 0) < (initial.scenario.maxRows ?? 0));
 
   const setFields = (fields: FieldSpec[]) => setDraft((d) => ({ ...d, scenario: { ...d.scenario, fields } }));
 
@@ -199,7 +255,9 @@ export function SimulationEditor({
    * ready to save rather than with message-shaped leftovers. Fields the user
    * edited are kept; a table then only gains the key it cannot do without.
    */
-  const switchTransport = (kind: "mqtt" | "sql") => {
+  const switchTransport = (kind: Transport["kind"]) => {
+    // The table typed before comes back with the switch.
+    if (draft.transport.kind === "sql") lastSql.current = draft.transport;
     setDraft((d) => {
       if (kind === d.transport.kind) return d;
 
@@ -210,8 +268,8 @@ export function SimulationEditor({
         return {
           ...d,
           transport: saved ?? { kind: "mqtt", url: defaultBrokerUrl, topic: topicFor(d.name) },
-          // A broker keeps no rows, so there is nothing to fill.
-          scenario: { ...d.scenario, fields, primaryKey: undefined, cadence: undefined },
+          // A broker keeps no rows, so there is nothing to fill or replace.
+          scenario: { ...d.scenario, fields, primaryKey: undefined, cadence: undefined, writeMode: undefined },
         };
       }
 
@@ -220,20 +278,30 @@ export function SimulationEditor({
       if (!fields.some((f) => f.spec.kind === "sequence")) {
         fields = [SQL_FIELDS[0], ...fields];
       }
+      const maxRows = d.scenario.maxRows ?? (kind === "rest" ? 100 : 5000);
+      // A key that no longer names a field is picked again.
+      const primaryKey = fields.some((f) => f.name === d.scenario.primaryKey)
+        ? d.scenario.primaryKey
+        : fields.find((f) => f.spec.kind === "sequence")?.name;
       return {
         ...d,
-        transport: { kind: "sql", table: "" },
+        transport: kind === "rest" ? { kind: "rest" } : (lastSql.current ?? { kind: "sql", table: "" }),
         scenario: {
           ...d.scenario,
           fields,
-          primaryKey: fields.find((f) => f.spec.kind === "sequence")?.name,
+          primaryKey,
           seedRows: d.scenario.seedRows ?? 100,
           insertsPerTick: d.scenario.insertsPerTick ?? 1,
-          maxRows: d.scenario.maxRows ?? 5000,
+          maxRows: kind === "rest" ? Math.min(maxRows, MAX_REST_ROWS) : maxRows,
+          // A REST list does not grow; see the service's validation.
+          writeMode: kind === "rest" ? "replace" : d.scenario.writeMode,
         },
       };
     });
   };
+
+  const setScenario = (patch: Partial<SimulationDraft["scenario"]>) =>
+    setDraft((d) => ({ ...d, scenario: { ...d.scenario, ...patch } }));
 
   return (
     <PageBody>
@@ -336,7 +404,7 @@ export function SimulationEditor({
               <CardHeader title="Ziel" description="Wohin die Daten gehen." />
               <div className="grid gap-4 px-5 py-4">
                 <div className="flex gap-1 rounded-md bg-muted p-1 text-sm sm:w-fit">
-                  {(["mqtt", "sql"] as const).map((kind) => (
+                  {(["mqtt", "sql", "rest"] as const).map((kind) => (
                     <button
                       key={kind}
                       type="button"
@@ -345,7 +413,7 @@ export function SimulationEditor({
                         draft.transport.kind === kind ? "bg-background shadow-xs" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {kind === "mqtt" ? "MQTT-Nachrichten" : "SQL-Tabelle"}
+                      {TRANSPORT_LABEL[kind]}
                     </button>
                   ))}
                 </div>
@@ -396,32 +464,41 @@ export function SimulationEditor({
                   </div>
                 ) : (
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field
-                      label="Tabelle"
-                      hint="Mit Schema, z. B. kataster.kiez_baeume. Die Datenbank kommt aus der Generator-Konfiguration."
-                    >
-                      <Input
-                        value={draft.transport.table}
-                        onChange={(e) => setDraft({ ...draft, transport: { kind: "sql", table: e.target.value } })}
-                        className="font-mono"
-                      />
-                    </Field>
-                    <Field label="Primärschlüssel" hint="Nur „Laufende Nummer“ liefert eindeutige Werte.">
-                      <Select
-                        value={draft.scenario.primaryKey ?? ""}
-                        onChange={(e) =>
-                          setDraft({ ...draft, scenario: { ...draft.scenario, primaryKey: e.target.value || undefined } })
-                        }
-                      >
-                        <option value="">– wählen –</option>
-                        {draft.scenario.fields.map((f) => (
-                          <option key={f.name} value={f.name}>
-                            {f.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    {!fill && (
+                    {draft.transport.kind === "sql" ? (
+                      <>
+                        <Field
+                          label="Tabelle"
+                          hint="Mit Schema, z. B. kataster.kiez_baeume. Die Datenbank kommt aus der Generator-Konfiguration."
+                        >
+                          <Input
+                            value={draft.transport.table}
+                            onChange={(e) => setDraft({ ...draft, transport: { kind: "sql", table: e.target.value } })}
+                            className="font-mono"
+                          />
+                        </Field>
+                        <Field label="Primärschlüssel" hint="Nur „Laufende Nummer“ liefert eindeutige Werte.">
+                          <Select
+                            value={draft.scenario.primaryKey ?? ""}
+                            onChange={(e) => setScenario({ primaryKey: e.target.value || undefined })}
+                          >
+                            <option value="">– wählen –</option>
+                            {draft.scenario.fields.map((f) => (
+                              <option key={f.name} value={f.name}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground sm:col-span-2">
+                        Die Plattform holt die Liste beim Generator ab:{" "}
+                        <span className="font-mono text-foreground">GET /data/{id ?? "<ID>"}</span>
+                        {id ? "" : " (die ID steht nach dem Speichern auf der Detailseite)"}. Ohne Login und ohne
+                        Seiten - jeder Abruf liefert die ganze Liste als JSON.
+                      </p>
+                    )}
+                    {!fill && !replace && (
                       <>
                         <CheckedField
                           label="Zeilen beim Start"
@@ -461,9 +538,19 @@ export function SimulationEditor({
                       </>
                     )}
                     <CheckedField
-                      label="Obergrenze (Zeilen)"
-                      hint="Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle."
-                      error={maxRowsError(draft.scenario.maxRows)}
+                      label={replace ? "Zeilen je Takt" : "Obergrenze (Zeilen)"}
+                      hint={
+                        replace
+                          ? `Jeder Takt ersetzt die ganze ${unit} durch so viele frische Zeilen, mit denselben Schlüsseln. Höchstens ${MAX_REPLACE_ROWS_PER_SECOND.toLocaleString("de-DE")} Zeilen pro Sekunde, bei diesem Takt also ${replaceLimit(Number.isFinite(draft.scenario.intervalSeconds) ? draft.scenario.intervalSeconds : 1).toLocaleString("de-DE")}.`
+                          : draft.transport.kind === "rest"
+                            ? `Pflicht, höchstens ${MAX_REST_ROWS.toLocaleString("de-DE")}: jeder Abruf liefert die ganze Liste.`
+                            : "Pflicht: jeder Pipeline-Lauf liest die ganze Tabelle."
+                      }
+                      error={maxRowsError(
+                        draft.scenario.maxRows,
+                        draft.transport.kind,
+                        replace ? draft.scenario.intervalSeconds : undefined,
+                      )}
                       showError={submitted}
                     >
                       {(invalid) => (
@@ -483,13 +570,13 @@ export function SimulationEditor({
             <Card>
               <CardHeader title="Takt" description="Wie oft Daten erzeugt werden." />
               <div className="grid gap-3 px-5 py-4">
-                {draft.transport.kind === "sql" && (
+                {rows && (
                   <div className="flex flex-wrap gap-1">
                     {CADENCES.map(({ cadence, label }) => (
                       <button
                         key={cadence}
                         type="button"
-                        onClick={() => setDraft({ ...draft, scenario: { ...draft.scenario, cadence } })}
+                        onClick={() => setScenario({ cadence })}
                         className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                           (draft.scenario.cadence ?? "interval") === cadence
                             ? "border-primary bg-primary text-primary-foreground"
@@ -503,11 +590,53 @@ export function SimulationEditor({
                 )}
                 {fill ? (
                   <p className="text-xs text-muted-foreground">
-                    Beim Start wird die Tabelle bis zur Obergrenze befüllt, danach kommen keine Zeilen dazu. Ein
+                    Beim Start wird die {unit} bis zur Obergrenze befüllt, danach kommen keine Zeilen dazu. Ein
                     Neustart ergänzt nur, was fehlt. Richtig für Stammdaten wie ein Baumkataster.
                   </p>
                 ) : (
                   <>
+                    {draft.transport.kind === "rest" && (
+                      <p className="text-xs text-muted-foreground">
+                        Bei jedem Takt wird die ganze Liste neu geschrieben, mit denselben Schlüsseln. Eine wachsende
+                        Liste gibt es nicht: sie lebt im Speicher und würde nach einem Neustart von vorn zählen.
+                      </p>
+                    )}
+                    {draft.transport.kind === "sql" && (
+                      <div className="grid gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Bei jedem Takt:</span>
+                          <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
+                            {WRITE_MODES.map(({ mode, label }) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                aria-pressed={(draft.scenario.writeMode ?? "append") === mode}
+                                onClick={() => setScenario({ writeMode: mode })}
+                                className={`rounded px-3 py-1 font-medium transition-colors ${
+                                  (draft.scenario.writeMode ?? "append") === mode
+                                    ? "bg-background shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {replace
+                            ? `Die ganze ${unit} wird geleert und neu geschrieben, mit denselben Schlüsseln. Sie zeigt immer nur den aktuellen Stand, und die Plattform überschreibt ihre Zeilen.`
+                            : `Neue Zeilen kommen hinten dazu, bis die Obergrenze erreicht ist. Die ${unit} wächst zu einem Verlauf.`}
+                        </p>
+                      </div>
+                    )}
+                    {dropsRows ? (
+                      <p className="flex items-start gap-2 rounded-md border border-warn/50 bg-warn/15 px-3 py-2 text-xs">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                        Zeilen, die dadurch aus der {unit} verschwinden, bleiben auf der Plattform mit ihren letzten
+                        Werten stehen: die Plattform löscht nie. Bei Bedarf dort von Hand aufräumen.
+                      </p>
+                    ) : null}
                     <div className="flex flex-wrap gap-1">
                       {INTERVAL_PRESETS.map((s) => (
                         <button
@@ -574,7 +703,7 @@ export function SimulationEditor({
                   <FieldEditor
                     key={index}
                     field={field}
-                    isPrimaryKey={draft.scenario.primaryKey === field.name}
+                    isPrimaryKey={draft.transport.kind === "sql" && draft.scenario.primaryKey === field.name}
                     showErrors={submitted}
                     onChange={(next) => setFields(draft.scenario.fields.map((f, i) => (i === index ? next : f)))}
                     onRemove={() => setFields(draft.scenario.fields.filter((_, i) => i !== index))}

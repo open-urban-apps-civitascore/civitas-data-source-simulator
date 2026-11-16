@@ -10,11 +10,14 @@ import type {
   Transport,
   WireScenario,
 } from "./types";
+import { hasRows } from "./types";
 
 export function toInput(draft: SimulationDraft): SimulationInput {
   const fields: Record<string, GeneratorSpec> = {};
   for (const f of draft.scenario.fields) fields[f.name] = f.spec;
   const sql = draft.transport.kind === "sql";
+  const rows = hasRows(draft.transport);
+  const fill = rows && draft.scenario.cadence === "fillToLimit";
   return {
     ...(draft.name ? { name: draft.name } : {}),
     ...(draft.description ? { description: draft.description } : {}),
@@ -24,10 +27,7 @@ export function toInput(draft: SimulationDraft): SimulationInput {
     scenario: {
       // A fill has no interval and hides its input, so a value emptied before
       // the switch must not fail the save; the service's default stands in.
-      intervalSeconds:
-        sql && draft.scenario.cadence === "fillToLimit" && !Number.isFinite(draft.scenario.intervalSeconds)
-          ? 10
-          : draft.scenario.intervalSeconds,
+      intervalSeconds: fill && !Number.isFinite(draft.scenario.intervalSeconds) ? 10 : draft.scenario.intervalSeconds,
       fields,
       ...(sql
         ? {
@@ -37,10 +37,16 @@ export function toInput(draft: SimulationDraft): SimulationInput {
                 draft.scenario.fields.map((f) => [f.name, columnTypeFor(f.spec)] as const),
               ),
             },
+          }
+        : {}),
+      ...(rows
+        ? {
             seedRows: draft.scenario.seedRows ?? 0,
             insertsPerTick: draft.scenario.insertsPerTick ?? 1,
             maxRows: draft.scenario.maxRows,
-            ...(draft.scenario.cadence === "fillToLimit" ? { cadence: "fillToLimit" as const } : {}),
+            ...(fill ? { cadence: "fillToLimit" as const } : {}),
+            // A fill writes once, so there is nothing to replace.
+            ...(!fill && draft.scenario.writeMode === "replace" ? { writeMode: "replace" as const } : {}),
           }
         : {}),
     },
@@ -87,6 +93,7 @@ export function toDraft(input: SimulationInput): SimulationDraft {
   const scenario: Scenario = {
     intervalSeconds: input.scenario.intervalSeconds,
     cadence: input.scenario.cadence,
+    writeMode: input.scenario.writeMode,
     fields: Object.entries(input.scenario.fields).map(([name, spec]) => ({ name, spec })),
     primaryKey: input.scenario.table?.primaryKey,
     seedRows: input.scenario.seedRows,
@@ -139,13 +146,15 @@ export function fromJson(text: string): SimulationDraft {
   if (transport.kind === "sql") {
     if (typeof transport.table !== "string") throw new Error("SQL: „transport.table“ fehlt.");
     parsedTransport = { kind: "sql", table: transport.table };
+  } else if (transport.kind === "rest") {
+    parsedTransport = { kind: "rest" };
   } else if (transport.kind === "mqtt" || transport.kind === undefined) {
     if (typeof transport.url !== "string" || typeof transport.topic !== "string") {
       throw new Error("MQTT: „transport.url“ und „transport.topic“ werden gebraucht.");
     }
     parsedTransport = { kind: "mqtt", url: transport.url, topic: transport.topic };
   } else {
-    throw new Error(`Unbekannter Transport „${String(transport.kind)}“ (mqtt oder sql).`);
+    throw new Error(`Unbekannter Transport „${String(transport.kind)}“ (mqtt, sql oder rest).`);
   }
 
   const table = isObject(scenario.table) ? scenario.table : undefined;
@@ -161,6 +170,7 @@ export function fromJson(text: string): SimulationDraft {
     scenario: {
       intervalSeconds: num(scenario.intervalSeconds) ?? 10,
       cadence: scenario.cadence === "fillToLimit" ? "fillToLimit" : undefined,
+      writeMode: scenario.writeMode === "replace" ? "replace" : undefined,
       fields,
       primaryKey: table && typeof table.primaryKey === "string" ? table.primaryKey : undefined,
       seedRows: num(scenario.seedRows),

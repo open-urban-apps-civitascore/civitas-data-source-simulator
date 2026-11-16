@@ -15,6 +15,7 @@ const badgeVariants = cva(
         muted: "border-transparent bg-muted text-muted-foreground",
         mqtt: "border-transparent bg-status-label text-foreground",
         sql: "border-transparent bg-experimental/20 text-foreground",
+        rest: "border-transparent bg-primary-light text-foreground",
       },
     },
     defaultVariants: { variant: "default" },
