@@ -273,7 +273,8 @@ function SpecParams({
 
 function IntegerToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex items-center gap-2 pt-7 text-sm">
+    // Level with the inputs beside it: below their label line (1.25rem) and gap (0.375rem), as tall as an input.
+    <label className="flex h-9 items-center gap-2 self-start text-sm sm:mt-[1.625rem]">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-primary" />
       Ganzzahl
     </label>
