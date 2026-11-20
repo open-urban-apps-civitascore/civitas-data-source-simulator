@@ -11,6 +11,7 @@ export async function AppHeader({
   action?: React.ReactNode;
 }) {
   const health = await generatorHealth();
+  const status = health ? `Generator verbunden · ${health.simulations} Simulationen` : "Generator nicht erreichbar";
 
   return (
     <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center justify-between border-b bg-background px-4 py-2">
@@ -19,14 +20,13 @@ export async function AppHeader({
         <Activity className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
         <span className="truncate">{breadcrumb}</span>
       </div>
-      <div className="flex shrink-0 items-center gap-3">
-        {action}
-        <span className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground">
-          <span className={`size-1.5 rounded-full ${health ? "bg-success" : "bg-error"}`} />
-          <span className="hidden sm:inline">
-            {health ? `Generator verbunden · ${health.simulations} Simulationen` : "Generator nicht erreichbar"}
-          </span>
+      <div className="flex shrink-0 items-center gap-4">
+        {/* A status, not a control: no border, and before the action. */}
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground" title={status}>
+          <span aria-hidden className={`size-2 rounded-full ${health ? "bg-success" : "bg-error"}`} />
+          <span className="sr-only sm:not-sr-only">{status}</span>
         </span>
+        {action}
       </div>
     </header>
   );
